@@ -2,5 +2,5 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# 07:00 mỗi sáng: render + đăng file JSON đặt sẵn
-0 7 * * * cd /ABS/PATH/quote-reels-starter && /usr/bin/python3 src/publish.py --json data/queue/today.json >> logs/publish.log 2>&1
+# 07:00 mỗi sáng: lấy 1 JSON trong data/queue/pending, render + đăng
+0 7 * * * cd /ABS/PATH/quote-reels-starter && /usr/bin/python3 src/publish.py --queue >> logs/publish.log 2>&1

@@ -5,13 +5,13 @@ Bộ khởi động làm video Reels Facebook kiểu list đời sống / tài c
 Pipeline:
 
 ```
-JSON list  →  PNG chữ (Pillow)  →  Voice (edge-tts)
+JSON list  →  PNG chữ (Pillow, hook 3s + full)
                  ↓
-        Footage thật + nhạc
+        Voice (edge-tts) + footage + nhạc
                  ↓
-              FFmpeg  →  mp4 9:16
+        FFmpeg 9:16 · AAC stereo 48 kHz · ducking · fade
                  ↓
-         Facebook Page Reels API
+        Facebook Page Reels API (retry, quota 30/24h, chống trùng)
 ```
 
 ## Cài đặt
@@ -23,9 +23,12 @@ cd quote-reels-starter
 pip install -r requirements.txt
 ```
 
-Font Be Vietnam Pro (OFL) đã nằm trong `assets/fonts/`.
+Font Be Vietnam Pro (OFL) nằm trong `assets/fonts/`.
+Footage mẫu biển hoàng hôn nằm trong `assets/footage/ocean-sunset.jpg`.
 
-## Chạy clip mẫu ngay
+`config.yaml` **được đọc thật** — màu, giọng, volume, safe zone, hook 3s.
+
+## Chạy clip mẫu
 
 ```bash
 python3 src/make_video.py --json data/samples/clip_001.json
@@ -33,7 +36,10 @@ python3 src/make_video.py --json data/samples/clip_001.json
 
 File ra: `assets/out/clip_001.mp4`
 
-Chưa có footage / nhạc thì script tự tạo nền gradient + nhạc placeholder để bạn kiểm tra chữ và giọng.
+- 3 giây đầu: chỉ tiêu đề (đọc được khi tắt tiếng).
+- Sau đó: đủ list.
+- Nhạc tự hạ khi có giọng (sidechain ducking).
+- Audio AAC stereo 48 kHz, GOP 2s — đúng spec Reels API (3–90 giây).
 
 Làm cả 2 mẫu:
 
@@ -44,89 +50,68 @@ python3 src/batch.py
 ## Làm clip mới
 
 1. Copy prompt trong `prompts/generate_list.md` vào Claude / ChatGPT / Grok.
-2. Dán JSON vào `data/samples/clip_003.json`.
-3. (Khuyên dùng) thả 1 video biển/hoàng hôn vào `assets/footage/`.
+2. Dán JSON vào `data/samples/clip_003.json` (có đủ `caption` + `voice_script`).
+3. Thả video biển/hoàng hôn vào `assets/footage/` nếu muốn footage chuyển động.
 4. Chạy:
 
 ```bash
 python3 src/make_video.py --json data/samples/clip_003.json
 ```
 
-Chỉ render lớp chữ:
+Chỉ overlay:
 
 ```bash
 python3 src/render_overlay.py --json data/samples/clip_001.json
 ```
 
-Chỉ tạo giọng:
+Chỉ giọng:
 
 ```bash
 python3 src/tts.py --json data/samples/clip_001.json
 python3 src/tts.py --json data/samples/clip_001.json --voice vi-VN-HoaiMyNeural
 ```
 
-## Footage đẹp hơn
-
-Tải clip miễn phí:
-
-- https://pixabay.com/videos/search/ocean%20sunset/
-- https://www.pexels.com/search/videos/sunset%20ocean/
-
-Rồi chuẩn hóa về 1080x1920:
-
-```bash
-bash scripts/prepare_footage.sh
-```
-
-Giọng production nên đổi sang Vbee / FPT.AI rồi truyền file vào:
+Giọng Vbee / FPT.AI: xuất mp3 rồi
 
 ```bash
 python3 src/make_video.py --json data/samples/clip_001.json --voice assets/voice/clip_001_vbee.mp3
 ```
 
-## Cấu trúc
+`--voice` ở `make_video.py` / `publish.py` là **đường dẫn file**.
+`--voice` ở `tts.py` là **tên giọng Neural**.
 
+## Hàng chờ mỗi ngày
+
+```bash
+python3 src/jobqueue.py add data/samples/clip_001.json
+python3 src/jobqueue.py list
+python3 src/publish.py --queue
 ```
-quote-reels-starter/
-  prompts/generate_list.md
-  data/samples/clip_001.json
-  src/render_overlay.py
-  src/tts.py
-  src/make_video.py
-  src/batch.py
-  assets/fonts/
-  assets/footage/
-  assets/music/
-  assets/voice/
-  assets/overlays/
-  assets/out/
-```
+
+Clip xong → `data/queue/done/`. Lỗi → `data/queue/failed/`.
+Log đăng: `data/published.json` (chống đăng trùng + đếm 30 Reels / 24h).
+
+Cron: xem `scripts/cron.example`.
 
 ## Tự động đăng Facebook Page
 
-API chính thức **chỉ đăng lên Page**, không đăng profile cá nhân. Tối đa **30 Reels API / Page / 24 giờ**.
+API chính thức **chỉ đăng lên Page**. Tối đa **30 Reels API / Page / 24 giờ**.
 
-### 1. Lấy token
+Quyền: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`.
+User là admin Page, task `CREATE_CONTENT`.
+App phải **Live** (hoặc user là tester) — Development mode không đăng được cho người ngoài.
 
-1. Vào [developers.facebook.com](https://developers.facebook.com/) tạo App loại Business.
-2. Thêm sản phẩm **Facebook Login** (hoặc Pages API).
-3. Quyền cần có: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`.
-4. User phải là admin Page và có quyền `CREATE_CONTENT`.
-5. Graph API Explorer → chọn App → Generate Page Access Token của đúng Page.
-6. Đổi sang long-lived token (kéo dài ~60 ngày), hoặc dùng System User token trong Business Manager nếu làm production.
+### Token ~60 ngày
 
 ```bash
 cp .env.example .env
-# điền FB_PAGE_ID và FB_PAGE_ACCESS_TOKEN
+# điền FB_APP_ID, FB_APP_SECRET, FB_PAGE_ID
+python3 src/fbtoken.py --short USER_SHORT_LIVED_TOKEN
 ```
 
-Lấy Page ID: vào Page → Giới thiệu, hoặc gọi:
+Copy Page token vào `FB_PAGE_ACCESS_TOKEN`. Production: System User trong Business Manager.
 
-```bash
-curl "https://graph.facebook.com/v26.0/me/accounts?access_token=USER_TOKEN"
-```
-
-### 2. Đăng clip đã render
+### Đăng clip đã render
 
 ```bash
 python3 src/upload_facebook.py \
@@ -134,38 +119,33 @@ python3 src/upload_facebook.py \
   --json data/samples/clip_001.json
 ```
 
-Lưu nháp trước:
+Nháp (Graph có thể từ chối — docs Reels API chỉ nêu `PUBLISHED`):
 
 ```bash
 python3 src/upload_facebook.py --video assets/out/clip_001.mp4 --json data/samples/clip_001.json --state DRAFT
 ```
 
-Hẹn giờ (UNIX timestamp):
+Đăng lại clip đã có trong log: thêm `--force`.
 
-```bash
-python3 src/upload_facebook.py --video assets/out/clip_001.mp4 --json data/samples/clip_001.json --state SCHEDULED --at 1756400400
-```
-
-### 3. Render xong đăng luôn
+### Render xong đăng luôn
 
 ```bash
 python3 src/publish.py --json data/samples/clip_001.json
 ```
 
-### 4. Lịch mỗi ngày (cron)
+## Test
 
-```cron
-0 7 * * * cd /path/quote-reels-starter && /usr/bin/python3 src/publish.py --json data/queue/today.json >> logs/publish.log 2>&1
+```bash
+python3 -m unittest tests/test_schema.py
 ```
-
-Muốn kéo hàng từ Google Sheet thì dùng n8n template sẵn:
-https://n8n.io/workflows/10122-automate-facebook-reels-publishing-with-google-sheets-and-drive/
 
 ## Lưu ý
 
-- Giữ footage thật, đừng gen video AI.
+- Giữ footage thật, đừng gen video AI cho kênh chính.
 - 1 giọng / 1 template xuyên suốt kênh.
-- 3 giây đầu phải đọc được tiêu đề khi tắt tiếng.
+- 3 giây đầu phải đọc được tiêu đề khi tắt tiếng — script tự render overlay hook.
+- Safe zone: top 200px, bottom 360px (UI Facebook).
 - Đăng page phụ 7–14 ngày trước khi đưa sang page chính.
-- Không dùng tool giả lập app / cookie / selenium để đăng profile — dễ khóa tài khoản.
+- Không dùng tool giả lập app / cookie / selenium để đăng profile.
 - Token hết hạn thì clip render vẫn chạy, chỉ bước upload lỗi.
+- `SCHEDULED` không nằm trong docs Reels API — đừng phụ thuộc.

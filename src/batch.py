@@ -4,17 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-from make_video import build  # noqa: E402
+from make_video import build
 
 
 def main() -> None:
+    from config import root
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", default=str(ROOT / "data" / "samples"))
+    parser.add_argument("--dir", default=str(root() / "data" / "samples"))
     args = parser.parse_args()
     folder = Path(args.dir)
     files = sorted(folder.glob("*.json"))

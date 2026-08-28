@@ -8,7 +8,6 @@ __pycache__/
 logs/
 *.zip
 
-# Generated media — render lại bằng script
 assets/out/*
 !assets/out/.gitkeep
 assets/overlays/*
@@ -18,3 +17,11 @@ assets/voice/*
 assets/footage/_placeholder.mp4
 assets/music/_placeholder.m4a
 assets/footage/_normalized/
+
+data/published.json
+data/queue/done/*
+!data/queue/done/.gitkeep
+data/queue/failed/*
+!data/queue/failed/.gitkeep
+data/queue/pending/*
+!data/queue/pending/.gitkeep

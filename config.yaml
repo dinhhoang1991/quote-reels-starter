@@ -2,22 +2,50 @@ video:
   width: 1080
   height: 1920
   fps: 30
+  min_seconds: 3
+  max_seconds: 90
+  crf: 20
+  gop: 60
+  ken_burns: true
+
+safe_zone:
+  top: 200
+  bottom: 360
+  side: 72
+  right_ui: 110
+
+hook:
+  seconds: 3.0
+  title_size: 78
 
 style:
   title_color: "#FF2A2A"
   item_label_color: "#FFE566"
-  item_text_color: "#FFF6C2"
-  footer_color: "#5B9FFF"
-  panel_rgba: [0, 0, 0, 145]
+  item_text_color: "#FFF4B0"
+  footer_color: "#4CA3FF"
+  panel_rgba: [0, 0, 0, 150]
   stroke_rgba: [0, 0, 0, 220]
   stroke_width: 3
+  panel_radius: 28
 
 audio:
   voice_rate: "-8%"
-  voice_name: "vi-VN-NamMinhNeural"   # đổi sang vi-VN-HoaiMyNeural nếu muốn giọng nữ
+  voice_name: "vi-VN-NamMinhNeural"
   music_volume: 0.12
   tail_seconds: 1.2
   head_seconds: 0.6
+  sample_rate: 48000
+  channels: 2
+  ducking:
+    threshold: 0.06
+    ratio: 7
+    attack: 40
+    release: 400
+
+facebook:
+  api_version: "v26.0"
+  daily_limit: 30
+  max_retries: 3
 
 paths:
   fonts_dir: assets/fonts
@@ -26,6 +54,8 @@ paths:
   voice_dir: assets/voice
   overlay_dir: assets/overlays
   out_dir: assets/out
+  queue_dir: data/queue
+  published_log: data/published.json
   title_font: BeVietnamPro-Black.ttf
   body_font: BeVietnamPro-ExtraBold.ttf
   footer_font: BeVietnamPro-SemiBold.ttf

@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Generate Vietnamese voiceover with edge-tts (free, no API key)."""
+"""Vietnamese voiceover with edge-tts (free, no API key).
+
+Giọng production (Vbee / FPT.AI): xuất mp3 rồi truyền --voice file vào make_video.py.
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from config import load_config, resolve_path, root
+from schema import load_clip
+
+ROOT = root()
 
 
 async def synth(text: str, out_path: Path, voice: str, rate: str) -> Path:
@@ -23,18 +28,27 @@ async def synth(text: str, out_path: Path, voice: str, rate: str) -> Path:
     return out_path
 
 
+def synth_clip(data: dict, out_path: Path | None = None) -> Path:
+    cfg = load_config()
+    voice = cfg.audio.voice_name
+    rate = cfg.audio.voice_rate
+    if out_path is None:
+        out_path = resolve_path(cfg.paths.voice_dir) / f"{data['id']}.mp3"
+    return asyncio.run(synth(data["voice_script"], out_path, voice, rate))
+
+
 def main() -> None:
+    cfg = load_config()
     parser = argparse.ArgumentParser(description="TTS tiếng Việt")
     parser.add_argument("--json", required=True)
     parser.add_argument("--out", default="")
-    parser.add_argument("--voice", default="vi-VN-NamMinhNeural")
-    parser.add_argument("--rate", default="-8%")
+    parser.add_argument("--voice", default=cfg.audio.voice_name)
+    parser.add_argument("--rate", default=cfg.audio.voice_rate)
     args = parser.parse_args()
 
-    data = json.loads(Path(args.json).read_text(encoding="utf-8"))
-    text = data.get("voice_script") or data.get("title", "")
-    out = Path(args.out) if args.out else ROOT / "assets" / "voice" / f"{data.get('id', 'clip')}.mp3"
-    path = asyncio.run(synth(text, out, args.voice, args.rate))
+    data = load_clip(Path(args.json))
+    out = Path(args.out) if args.out else resolve_path(cfg.paths.voice_dir) / f"{data['id']}.mp3"
+    path = asyncio.run(synth(data["voice_script"], out, args.voice, args.rate))
     print(path)
 
 
