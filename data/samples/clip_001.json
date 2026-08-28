@@ -1,0 +1,20 @@
+{
+  "id": "clip_001",
+  "topic": "phan_loai_thu_nhap",
+  "title": "PHÂN LOẠI TÀI SẢN\nTHEO THU NHẬP MỖI THÁNG",
+  "items": [
+    {"label": "Dưới 2 triệu", "text": "Rất nghèo khổ"},
+    {"label": "2 - 5 triệu", "text": "Nghèo thiếu thốn"},
+    {"label": "6 - 9 triệu", "text": "Cận nghèo"},
+    {"label": "10 - 15 triệu", "text": "Trung lưu thấp"},
+    {"label": "15 - 30 triệu", "text": "Trung lưu"},
+    {"label": "30 - 100 triệu", "text": "Trung lưu cao"},
+    {"label": "100 - 300 triệu", "text": "Giàu có"},
+    {"label": "300 - 500 triệu", "text": "Rất giàu"},
+    {"label": "500 triệu - 1 tỷ", "text": "Triệu phú"},
+    {"label": "Trên 5 tỷ", "text": "Tỷ phú"}
+  ],
+  "footer": "BẠN MUỐN CHỌN SỐ NÀO?",
+  "caption": "Phân loại tài sản theo thu nhập mỗi tháng.\nBạn đang ở mức nào? Comment số của mình.",
+  "voice_script": "Phân loại tài sản theo thu nhập mỗi tháng. Dưới 2 triệu: rất nghèo khổ. 2 đến 5 triệu: nghèo thiếu thốn. 6 đến 9 triệu: cận nghèo. 10 đến 15 triệu: trung lưu thấp. 15 đến 30 triệu: trung lưu. 30 đến 100 triệu: trung lưu cao. 100 đến 300 triệu: giàu có. 300 đến 500 triệu: rất giàu. 500 triệu đến 1 tỷ: triệu phú. Trên 5 tỷ: tỷ phú. Bạn muốn chọn số nào?"
+}

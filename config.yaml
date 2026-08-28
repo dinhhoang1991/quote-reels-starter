@@ -1,0 +1,31 @@
+video:
+  width: 1080
+  height: 1920
+  fps: 30
+
+style:
+  title_color: "#FF2A2A"
+  item_label_color: "#FFE566"
+  item_text_color: "#FFF6C2"
+  footer_color: "#5B9FFF"
+  panel_rgba: [0, 0, 0, 145]
+  stroke_rgba: [0, 0, 0, 220]
+  stroke_width: 3
+
+audio:
+  voice_rate: "-8%"
+  voice_name: "vi-VN-NamMinhNeural"   # đổi sang vi-VN-HoaiMyNeural nếu muốn giọng nữ
+  music_volume: 0.12
+  tail_seconds: 1.2
+  head_seconds: 0.6
+
+paths:
+  fonts_dir: assets/fonts
+  footage_dir: assets/footage
+  music_dir: assets/music
+  voice_dir: assets/voice
+  overlay_dir: assets/overlays
+  out_dir: assets/out
+  title_font: BeVietnamPro-Black.ttf
+  body_font: BeVietnamPro-ExtraBold.ttf
+  footer_font: BeVietnamPro-SemiBold.ttf

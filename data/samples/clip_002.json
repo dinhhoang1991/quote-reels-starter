@@ -1,0 +1,20 @@
+{
+  "id": "clip_002",
+  "topic": "kieu_nguoi_thanh_cong",
+  "title": "KIỂU NGƯỜI DỄ\nTHÀNH CÔNG",
+  "items": [
+    {"label": "Làm việc", "text": "Khi người khác nghỉ"},
+    {"label": "Im lặng", "text": "Để thành công lên tiếng"},
+    {"label": "Thua vẫn cười", "text": "Thắng không kiêu"},
+    {"label": "Ham học hỏi", "text": "Không ngại người giỏi"},
+    {"label": "Gặp khó", "text": "Càng khó càng làm"},
+    {"label": "Vượt sướng", "text": "Không ham hưởng thụ"},
+    {"label": "Giúp người", "text": "Không cần ai biết"},
+    {"label": "Kiên trì", "text": "Chậm mà chắc"},
+    {"label": "Nắm cơ hội", "text": "Chớp thời cơ"},
+    {"label": "Tập trung", "text": "Nói ít làm nhiều"}
+  ],
+  "footer": "BẠN ĐANG Ở KIỂU NÀO?",
+  "caption": "Kiểu người dễ thành công.\nBạn đang ở kiểu nào? Comment số.",
+  "voice_script": "Kiểu người dễ thành công. Làm việc khi người khác nghỉ. Im lặng để thành công lên tiếng. Thua vẫn cười, thắng không kiêu. Ham học hỏi, không ngại người giỏi. Gặp khó, càng khó càng làm. Vượt sướng, không ham hưởng thụ. Giúp người, không cần ai biết. Kiên trì, chậm mà chắc. Nắm cơ hội, chớp thời cơ. Tập trung, nói ít làm nhiều. Bạn đang ở kiểu nào?"
+}
