@@ -219,6 +219,13 @@ Không cần FFmpeg, edge-tts hay token — test dùng thư viện chuẩn, tmp 
 CI (`.github/workflows/ci.yml`) chạy ruff + test trên Python 3.10–3.13 và một job `doctor.py`.
 Dependency pin trong `requirements.txt`/`pyproject.toml` (hai bên phải khớp — có test kiểm tra).
 
+Góp code thì cài thêm công cụ dev (đã pin ruff để gate lint không tự đổi):
+
+```bash
+pip install -r requirements-dev.txt
+ruff check src tests
+```
+
 ## Xử lý sự cố
 
 | Hiện tượng | Cách xử lý |

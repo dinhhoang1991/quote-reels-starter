@@ -1,0 +1,4 @@
+# Công cụ dev (không cần cho production). Cài: pip install -r requirements-dev.txt
+# Ruff được pin vì bộ rule của nó đổi giữa các bản, pin để gate lint không tự đổi theo ngày.
+-r requirements.txt
+ruff==0.16.7

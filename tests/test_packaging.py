@@ -20,9 +20,10 @@ except ModuleNotFoundError:  # Python 3.10
 import yaml  # noqa: E402
 
 
-def requirement_entries() -> list[str]:
-    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
-    return [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+def requirement_entries(path: Path | None = None) -> list[str]:
+    """Các dòng dependency trong file requirements (bỏ comment/dòng trống)."""
+    lines = (path or ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith(("#", "-"))]
 
 
 def normalized(spec: str) -> str:
@@ -72,6 +73,16 @@ class WorkflowTest(unittest.TestCase):
         runs = " ".join(str(step.get("run", "")) for step in steps)
         self.assertIn("unittest discover -s tests -t .", runs)
         self.assertIn("ruff check src tests", runs)
+
+    def test_ci_cai_ruff_tu_requirements_dev(self):
+        """Ruff phải được pin, không cài bản mới nhất trôi nổi."""
+        lint_job = self.workflow["jobs"]["lint"]
+        installs = " ".join(str(step.get("run", "")) for step in lint_job["steps"])
+        self.assertIn("requirements-dev.txt", installs)
+        dev = requirement_entries(ROOT / "requirements-dev.txt")
+        ruff = [item for item in dev if item.lower().startswith("ruff")]
+        self.assertEqual(len(ruff), 1)
+        self.assertRegex(ruff[0], r"^ruff==\d")
 
     def test_ci_phu_cac_phien_bang_python_ho_tro(self):
         matrix = self.workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]

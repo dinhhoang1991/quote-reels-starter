@@ -88,6 +88,9 @@ python3 -m unittest discover -s tests -t .
 No FFmpeg, edge-tts or token needed: tests use the standard library, temp dirs and a fake HTTP layer.
 CI runs ruff and the suite on Python 3.10–3.13 plus a `doctor.py` job.
 
+Contributing: `pip install -r requirements-dev.txt` (ruff is pinned so the lint gate stays stable),
+then `ruff check src tests`.
+
 ## Notes
 
 - Keep real footage; do not use AI-generated video for the main channel.
