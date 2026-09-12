@@ -90,6 +90,33 @@ insights:
     - post_video_avg_time_watched
     - post_reactions_by_type_total
 
+cover:
+  # Ảnh cover lấy từ 1 frame trong đoạn hook (tiêu đề hiện rõ); dùng cho thumbnail YouTube
+  # và cho các nền tảng cần ảnh cover. at_seconds: 0 = giữa đoạn hook.
+  enabled: true
+  at_seconds: 0
+  # Mốc cover gửi cho TikTok (ms); 0 = để TikTok tự chọn
+  tiktok_cover_ms: 0
+
+crosspost:
+  # Đăng thêm sau khi Reel lên Facebook: [] = tắt, hoặc [youtube], [youtube, tiktok].
+  # Có thể ghi đè bằng `publish.py --crosspost youtube,tiktok` (hoặc --crosspost none).
+  targets: []
+  youtube_category_id: "22"
+  youtube_privacy: public
+  tiktok_privacy: SELF_ONLY
+
+schedule:
+  # Dùng cho `src/scheduler.py` (container/Docker). Giờ UTC; cron của host thì dùng
+  # scripts/cron.example. Biến môi trường SCHEDULE_HOUR/MINUTE/COMMAND ghi đè config này.
+  hour: 7
+  minute: 0
+  command: "python3 src/publish.py --queue"
+
+cleanup:
+  # `src/cleanup.py` chỉ xoá file cũ hơn số ngày này và không nằm trong queue.
+  keep_days: 30
+
 paths:
   fonts_dir: assets/fonts
   footage_dir: assets/footage
