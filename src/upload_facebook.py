@@ -18,7 +18,7 @@ from pathlib import Path
 
 from checks import probe_duration
 from config import load_config, root
-from logutil import assert_can_publish, record_publish, remaining_quota
+from logutil import assert_can_publish, log, record_publish, remaining_quota
 from schema import load_clip
 
 try:
@@ -28,6 +28,13 @@ except ImportError as exc:
 
 ROOT = root()
 DEFAULT_VERSION = "v26.0"
+DEFAULT_MAX_DELAY = 900.0
+
+# Lỗi Graph nên thử lại: lỗi tạm phía Meta + hạn mức (app/user/page/custom).
+# Meta trả các mã hạn mức này kèm HTTP 400 nên không thể chỉ nhìn status code.
+RETRYABLE_ERROR_CODES = {1, 2, 4, 17, 32, 341, 613}
+RATE_LIMIT_ERROR_CODES = {4, 17, 32, 613}
+RATE_LIMIT_HINT = " (hạn mức Graph — chờ rồi chạy lại, hoặc giảm số Reels/ngày)"
 
 
 def load_env(path: Path) -> None:
@@ -41,39 +48,123 @@ def load_env(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def api_error(resp: requests.Response) -> SystemExit:
+def error_payload(resp: requests.Response) -> dict:
+    """Object `error` trong body Graph; {} nếu body không phải JSON lỗi.
+
+    @param resp response từ Graph API
+    @returns error object, rỗng khi không đọc được
+    """
     try:
         payload = resp.json()
-    except Exception:
+    except ValueError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    error = payload.get("error")
+    return error if isinstance(error, dict) else {}
+
+
+def api_error(resp: requests.Response) -> SystemExit:
+    """SystemExit kèm error object đầy đủ và gợi ý khi lỗi là hạn mức."""
+    try:
+        payload = resp.json()
+    except ValueError:
         payload = {"text": resp.text[:500]}
-    return SystemExit(f"Facebook API {resp.status_code}: {json.dumps(payload, ensure_ascii=False)}")
+    error = error_payload(resp)
+    hint = RATE_LIMIT_HINT if error.get("code") in RATE_LIMIT_ERROR_CODES else ""
+    return SystemExit(
+        f"Facebook API {resp.status_code}: {json.dumps(payload, ensure_ascii=False)}{hint}"
+    )
 
 
 def is_transient(resp: requests.Response) -> bool:
-    if resp.status_code in {429, 500, 502, 503, 504}:
+    """Lỗi có nên thử lại: 429/5xx/408, `is_transient` của Meta, hoặc mã hạn mức."""
+    if resp.status_code in {408, 429, 500, 502, 503, 504}:
         return True
-    try:
-        err = (resp.json() or {}).get("error") or {}
-    except Exception:
-        return False
-    return bool(err.get("is_transient"))
+    error = error_payload(resp)
+    if bool(error.get("is_transient")):
+        return True
+    return error.get("code") in RETRYABLE_ERROR_CODES
+
+
+def retry_delay(resp: requests.Response, attempt: int, max_delay: float) -> float:
+    """Chờ bao lâu trước lần thử lại.
+
+    Ưu tiên `estimated_time_to_regain_access` (phút) mà Graph trả cho lỗi hạn mức,
+    nếu không có thì backoff luỹ thừa 1.5s * 2^attempt, luôn kẹp bởi `max_delay`.
+
+    @param resp response lỗi
+    @param attempt số lần đã thử (0-based)
+    @param max_delay trần thời gian chờ (giây)
+    @returns số giây cần chờ
+    """
+    error = error_payload(resp)
+    data = error.get("error_data")
+    estimated = data.get("estimated_time_to_regain_access") if isinstance(data, dict) else None
+    if estimated is not None:
+        try:
+            return min(float(estimated) * 60.0, max_delay)
+        except (TypeError, ValueError):
+            pass
+    return min(1.5 * (2 ** attempt), max_delay)
+
+
+def usage_headers(resp: requests.Response) -> list[str]:
+    """Các dòng mô tả mức dùng hạn mức từ header của Graph.
+
+    @param resp response bất kỳ từ Graph
+    @returns danh sách dòng đã format, rỗng nếu Meta không gửi header
+    """
+    lines: list[str] = []
+    for header in ("X-App-Usage", "X-Business-Use-Case-Usage"):
+        raw = resp.headers.get(header)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            continue
+        for scope, usage in _usage_entries(parsed):
+            lines.append(
+                f"usage {header} {scope}: call={usage.get('call_count', '?')}% "
+                f"cpu={usage.get('total_cputime', '?')}% time={usage.get('total_time', '?')}%"
+            )
+    return lines
+
+
+def _usage_entries(parsed: object) -> list[tuple[str, dict]]:
+    """Chuẩn hoá 2 dạng header: phẳng (X-App-Usage) và lồng theo business id."""
+    if not isinstance(parsed, dict):
+        return []
+    if "call_count" in parsed:
+        return [("app", parsed)]
+    return [
+        (str(scope), usage)
+        for scope, usage in parsed.items()
+        if isinstance(usage, dict)
+    ]
 
 
 def request_with_retry(method: str, url: str, retries: int, **kwargs) -> requests.Response:
-    delay = 1.5
+    cfg = load_config()
+    max_delay = float(cfg.facebook.get("retry_max_delay_seconds", DEFAULT_MAX_DELAY))
     last: requests.Response | None = None
     for attempt in range(retries):
         resp = requests.request(method, url, **kwargs)
         last = resp
+        for line in usage_headers(resp):
+            log(line)
         if resp.status_code < 400:
             return resp
         if not is_transient(resp) or attempt == retries - 1:
             return resp
-        print(f"  lỗi tạm {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
+        delay = retry_delay(resp, attempt, max_delay)
+        log(f"lỗi tạm {resp.status_code} (code={error_payload(resp).get('code')}), "
+            f"thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
         time.sleep(delay)
-        delay *= 2
     assert last is not None
     return last
+
 
 
 def start_session(page_id: str, token: str, version: str, retries: int) -> tuple[str, str]:
@@ -92,6 +183,8 @@ def start_session(page_id: str, token: str, version: str, retries: int) -> tuple
 
 
 def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -> None:
+    cfg = load_config()
+    max_delay = float(cfg.facebook.get("retry_max_delay_seconds", DEFAULT_MAX_DELAY))
     size = video_path.stat().st_size
     headers = {
         "Authorization": f"OAuth {token}",
@@ -99,7 +192,6 @@ def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -
         "file_size": str(size),
         "Content-Type": "application/octet-stream",
     }
-    delay = 1.5
     last_err = None
     for attempt in range(retries):
         with video_path.open("rb") as fh:
@@ -112,9 +204,9 @@ def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -
         last_err = resp
         if not is_transient(resp) or attempt == retries - 1:
             raise api_error(resp)
-        print(f"  upload tạm lỗi {resp.status_code}, thử lại ({attempt + 1}/{retries})")
+        delay = retry_delay(resp, attempt, max_delay)
+        log(f"upload tạm lỗi {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
         time.sleep(delay)
-        delay *= 2
     if last_err is not None:
         raise api_error(last_err)
 
@@ -132,7 +224,7 @@ def wait_ready(video_id: str, token: str, version: str, timeout_s: int = 180) ->
         uploading = (status.get("uploading_phase") or {}).get("status", "")
         processing = (status.get("processing_phase") or {}).get("status", "")
         video_status = status.get("video_status") or ""
-        print(f"  status: video={video_status} upload={uploading} process={processing}")
+        log(f"status: video={video_status} upload={uploading} process={processing}")
         if str(video_status).upper() in {"ERROR", "EXPIRED"}:
             raise SystemExit(f"Video lỗi: {json.dumps(last, ensure_ascii=False)}")
         if str(processing).upper() in {"COMPLETE", "COMPLETED"} or str(video_status).upper() in {
@@ -144,8 +236,9 @@ def wait_ready(video_id: str, token: str, version: str, timeout_s: int = 180) ->
             time.sleep(8)
             return last
         time.sleep(5)
-    print("Hết thời gian chờ encode, vẫn thử publish.")
+    log("hết thời gian chờ encode, vẫn thử publish.")
     return last
+
 
 
 def finish_publish(
@@ -212,15 +305,15 @@ def upload_reel(
         raise SystemExit(f"Video {duration:.1f}s ngoài khoảng Reels {lo:.0f}–{hi:.0f}s")
     if clip_id:
         assert_can_publish(clip_id, force=force)
-    print(f"Quota còn {remaining_quota()}/{cfg.facebook.daily_limit} trong 24h")
-    print("1) START session")
+    log(f"Quota còn {remaining_quota()}/{cfg.facebook.daily_limit} trong 24h")
+    log("1) START session")
     video_id, upload_url = start_session(page_id, token, version, retries)
-    print(f"   video_id={video_id}")
-    print("2) UPLOAD file")
+    log(f"   video_id={video_id}")
+    log("2) UPLOAD file")
     upload_binary(upload_url, token, video_path, retries)
-    print("3) WAIT encode")
+    log("3) WAIT encode")
     wait_ready(video_id, token, version)
-    print(f"4) FINISH state={state}")
+    log(f"4) FINISH state={state}")
     result = finish_publish(
         page_id, token, version, video_id, description, title, state, scheduled_ts, retries
     )
