@@ -82,6 +82,41 @@ The rotation list lives in `config.yaml` (`content.topics`); `publish.py` record
 posts (diacritics stripped, Jaccard similarity) and blocked above `content.duplicate_similarity`
 (default 0.85) unless `--force` is passed.
 
+## First comment, cover, cross-post
+
+- First comment: `first_comment` in the clip JSON, or the `facebook.first_comment` template in
+  `config.yaml` (`{title}`, `{footer}`, `{topic}`, `{caption}`). `--no-first-comment` skips it;
+  a failed comment is recorded but does not fail the publish.
+- Cover: a frame from the hook is extracted to `assets/overlays/<id>_cover.jpg` and used as the
+  YouTube thumbnail; `facebook.thumb_offset_ms` passes a cover timestamp to the Reels API.
+- Cross-post: `python3 src/publish.py --json ... --crosspost youtube,tiktok` (or set
+  `crosspost.targets` in config). Both uploaders support `--dry-run` and are documented in
+  `src/upload_youtube.py` / `src/upload_tiktok.py`; they have **not** been run against the real
+  APIs here (no approved app/account), only against a fake HTTP layer in the tests.
+
+## Docker
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+docker compose exec reels python3 src/doctor.py --online
+```
+
+The image ships FFmpeg and runs `doctor.py` on start (`DOCTOR_STRICT=1` stops on `[fail]`), then
+schedules itself with `src/scheduler.py` — no host cron needed. `assets/`, `data/` and `logs/` are
+mounted from the host. Schedule is UTC (`SCHEDULE_HOUR`/`SCHEDULE_MINUTE`), the command is
+`SCHEDULE_COMMAND`.
+
+## Cleanup
+
+```bash
+python3 src/cleanup.py           # list files older than cleanup.keep_days
+python3 src/cleanup.py --apply   # delete them
+```
+
+Only touches generated media under `assets/voice|overlays|out` and never deletes files belonging to
+clips still in `data/queue/pending|failed`.
+
 ## Tests
 
 ```bash
