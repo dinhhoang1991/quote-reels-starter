@@ -80,7 +80,7 @@ def queue_lock(stale_seconds: float = DEFAULT_STALE_SECONDS) -> Iterator[Path]:
                 raise SystemExit(
                     f"Cron khác đang chạy (lock {path} cũ {age / 60:.0f} phút). "
                     f"Xoá file đó nếu chắc chắn không còn tiến trình nào."
-                )
+                ) from None
             path.unlink(missing_ok=True)
     try:
         os.write(fd, f"{os.getpid()} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n".encode())

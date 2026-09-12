@@ -61,16 +61,14 @@ class EnsureVoiceTest(unittest.TestCase):
     def test_dung_lai_cache_khi_con_dung(self):
         dest = voice_path(self.data, self.cfg)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes("mp3 cũ".encode("utf-8"))
-        with mock.patch("make_video.load_config", return_value=self.cfg):
-            with mock.patch("tts.synth") as synth:
+        dest.write_bytes("mp3 cũ".encode())
+        with mock.patch("make_video.load_config", return_value=self.cfg), mock.patch("tts.synth") as synth:
                 self.assertEqual(ensure_voice(self.data, None), dest)
         synth.assert_not_called()
 
     def test_goi_tts_khi_chua_co_cache(self):
         expected = voice_path(self.data, self.cfg)
-        with mock.patch("make_video.load_config", return_value=self.cfg):
-            with mock.patch("tts.synth") as synth:
+        with mock.patch("make_video.load_config", return_value=self.cfg), mock.patch("tts.synth") as synth:
                 path = ensure_voice(self.data, None)
         self.assertEqual(path, expected)
         synth.assert_called_once_with(
@@ -81,10 +79,9 @@ class EnsureVoiceTest(unittest.TestCase):
     def test_doi_loi_thoai_thi_bo_qua_cache_cu(self):
         old = voice_path(self.data, self.cfg)
         old.parent.mkdir(parents=True, exist_ok=True)
-        old.write_bytes("mp3 cũ".encode("utf-8"))
+        old.write_bytes("mp3 cũ".encode())
         changed = validate_clip({**CLIP, "voice_script": "Lời thoại mới hoàn toàn."})
-        with mock.patch("make_video.load_config", return_value=self.cfg):
-            with mock.patch("tts.synth") as synth:
+        with mock.patch("make_video.load_config", return_value=self.cfg), mock.patch("tts.synth") as synth:
                 path = ensure_voice(changed, None)
         self.assertNotEqual(path, old)
         synth.assert_called_once()
@@ -92,14 +89,12 @@ class EnsureVoiceTest(unittest.TestCase):
     def test_voice_truyen_tay_thi_khong_dung_cache(self):
         manual = Path(self.tmp.name) / "vbee.mp3"
         manual.write_bytes(b"mp3")
-        with mock.patch("make_video.load_config", return_value=self.cfg):
-            with mock.patch("tts.synth") as synth:
+        with mock.patch("make_video.load_config", return_value=self.cfg), mock.patch("tts.synth") as synth:
                 self.assertEqual(ensure_voice(self.data, manual), manual)
         synth.assert_not_called()
 
     def test_voice_truyen_tay_khong_ton_tai_thi_bao_loi(self):
-        with mock.patch("make_video.load_config", return_value=self.cfg):
-            with self.assertRaises(SystemExit):
+        with mock.patch("make_video.load_config", return_value=self.cfg), self.assertRaises(SystemExit):
                 ensure_voice(self.data, Path(self.tmp.name) / "khong-co.mp3")
 
 

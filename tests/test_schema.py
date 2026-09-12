@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from checks import clamp_duration  # noqa: E402
+from config import load_config  # noqa: E402
 from schema import (  # noqa: E402
     ClipError,
     content_warnings,
@@ -13,9 +15,6 @@ from schema import (  # noqa: E402
     default_voice_script,
     validate_clip,
 )
-from checks import clamp_duration  # noqa: E402
-from config import load_config  # noqa: E402
-
 
 SAMPLE = {
     "id": "clip_001",

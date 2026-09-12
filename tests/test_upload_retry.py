@@ -84,8 +84,7 @@ class RequestWithRetryTest(unittest.TestCase):
             FakeResponse(400, graph_error(613, error_data={"estimated_time_to_regain_access": 1})),
             FakeResponse(200, {"video_id": "1"}),
         ]
-        with mock.patch("upload_facebook.requests.request", side_effect=responses) as request:
-            with mock.patch("upload_facebook.time.sleep") as sleep:
+        with mock.patch("upload_facebook.requests.request", side_effect=responses) as request, mock.patch("upload_facebook.time.sleep") as sleep:
                 resp = fb.request_with_retry("POST", "https://graph.facebook.com/x", 3)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(request.call_count, 3)
@@ -94,9 +93,8 @@ class RequestWithRetryTest(unittest.TestCase):
     def test_khong_thu_lai_loi_vinh_vien(self):
         with mock.patch(
             "upload_facebook.requests.request", return_value=FakeResponse(400, graph_error(190))
-        ) as request:
-            with mock.patch("upload_facebook.time.sleep") as sleep:
-                resp = fb.request_with_retry("POST", "https://graph.facebook.com/x", 3)
+        ) as request, mock.patch("upload_facebook.time.sleep") as sleep:
+            resp = fb.request_with_retry("POST", "https://graph.facebook.com/x", 3)
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(request.call_count, 1)
         sleep.assert_not_called()
@@ -104,9 +102,8 @@ class RequestWithRetryTest(unittest.TestCase):
     def test_het_luot_thi_tra_loi_cuoi(self):
         with mock.patch(
             "upload_facebook.requests.request", return_value=FakeResponse(503)
-        ) as request:
-            with mock.patch("upload_facebook.time.sleep"):
-                resp = fb.request_with_retry("POST", "https://graph.facebook.com/x", 2)
+        ) as request, mock.patch("upload_facebook.time.sleep"):
+            resp = fb.request_with_retry("POST", "https://graph.facebook.com/x", 2)
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(request.call_count, 2)
 
@@ -161,9 +158,8 @@ class UploadBinaryTest(unittest.TestCase):
             with mock.patch(
                 "upload_facebook.requests.post",
                 side_effect=[FakeResponse(500), FakeResponse(200, {"success": True})],
-            ) as post:
-                with mock.patch("upload_facebook.time.sleep") as sleep:
-                    fb.upload_binary("https://rupload.facebook.com/x", "token", video, 2)
+            ) as post, mock.patch("upload_facebook.time.sleep") as sleep:
+                fb.upload_binary("https://rupload.facebook.com/x", "token", video, 2)
         self.assertEqual(post.call_count, 2)
         sleep.assert_called_once_with(1.5)
 
@@ -173,9 +169,8 @@ class UploadBinaryTest(unittest.TestCase):
             video.write_bytes(b"x")
             with mock.patch(
                 "upload_facebook.requests.post", return_value=FakeResponse(403, graph_error(200))
-            ) as post:
-                with self.assertRaises(SystemExit):
-                    fb.upload_binary("https://rupload.facebook.com/x", "token", video, 3)
+            ) as post, self.assertRaises(SystemExit):
+                fb.upload_binary("https://rupload.facebook.com/x", "token", video, 3)
         self.assertEqual(post.call_count, 1)
 
 

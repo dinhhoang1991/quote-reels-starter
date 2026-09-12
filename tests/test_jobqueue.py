@@ -64,28 +64,28 @@ class QueueFailureTest(unittest.TestCase):
         self.assertEqual(data["id"], "broken")
         self.assertEqual(data["_queue"]["attempts"], 1)
 
+    def argv_queue(self):
+        return mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"])
+
     def test_ffmpeg_crash_moves_job_out_of_pending(self):
         """Lỗi không phải SystemExit (ffmpeg) trước đây để job kẹt trong pending mãi."""
-        with mock.patch.object(publish, "publish_one", side_effect=RuntimeError("ffmpeg chết")):
-            with mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"]):
-                with self.assertRaises(RuntimeError):
-                    publish.main()
+        crashed = mock.patch.object(publish, "publish_one", side_effect=RuntimeError("ffmpeg chết"))
+        with crashed, self.argv_queue(), self.assertRaises(RuntimeError):
+            publish.main()
         self.assertFalse(self.job.exists())
         meta = self.failed_job()["_queue"]
         self.assertEqual(meta["attempts"], 1)
         self.assertIn("RuntimeError", meta["last_error"])
 
     def test_system_exit_still_moves_job_to_failed(self):
-        with mock.patch.object(publish, "publish_one", side_effect=SystemExit("hết hạn token")):
-            with mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"]):
-                with self.assertRaises(SystemExit):
-                    publish.main()
+        expired = mock.patch.object(publish, "publish_one", side_effect=SystemExit("hết hạn token"))
+        with expired, self.argv_queue(), self.assertRaises(SystemExit):
+            publish.main()
         self.assertIn("hết hạn token", self.failed_job()["_queue"]["last_error"])
 
     def test_success_moves_job_to_done(self):
-        with mock.patch.object(publish, "publish_one") as fake:
-            with mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"]):
-                publish.main()
+        with mock.patch.object(publish, "publish_one") as fake, self.argv_queue():
+            publish.main()
         fake.assert_called_once()
         self.assertTrue((self.queue / "done" / "clip_x.json").exists())
         self.assertFalse(self.job.exists())
@@ -100,9 +100,8 @@ class QueueLockTest(QueueFailureTest):
     def test_lock_chan_lan_chay_thu_hai(self):
         with jobqueue.queue_lock() as path:
             self.assertTrue(path.exists())
-            with self.assertRaises(SystemExit):
-                with jobqueue.queue_lock():
-                    self.fail("không được lấy lock lần hai")
+            with self.assertRaises(SystemExit), jobqueue.queue_lock():
+                self.fail("không được lấy lock lần hai")
         self.assertFalse(path.exists())
         # Thoát ra là lấy lại được.
         with jobqueue.queue_lock():
@@ -122,16 +121,14 @@ class QueueLockTest(QueueFailureTest):
         path = jobqueue.lock_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("99999\n", encoding="utf-8")
-        with self.assertRaises(SystemExit):
-            with jobqueue.queue_lock(stale_seconds=3600):
-                self.fail("lock mới thì không được lấy")
+        with self.assertRaises(SystemExit), jobqueue.queue_lock(stale_seconds=3600):
+            self.fail("lock mới thì không được lấy")
         path.unlink()
 
     def test_publish_queue_nha_lock_sau_khi_chay(self):
         path = jobqueue.lock_path()
-        with mock.patch.object(publish, "publish_one"):
-            with mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"]):
-                publish.main()
+        with mock.patch.object(publish, "publish_one"), self.argv_queue():
+            publish.main()
         self.assertFalse(path.exists())
         self.assertFalse(self.job.exists())
 

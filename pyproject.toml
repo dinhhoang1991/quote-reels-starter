@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quote-reels-starter"
+version = "0.2.0"
+description = "Pipeline làm video Reels Facebook từ JSON list: overlay, TTS, FFmpeg, Page Reels API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Giữ khớp với requirements.txt — tests/test_packaging.py kiểm tra hai bên.
+dependencies = [
+    "pillow==12.3.0",
+    "edge-tts==7.2.8",
+    "pyyaml==6.0.3",
+    "requests==2.34.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/dinhhoang1991/quote-reels-starter"
+
+[tool.setuptools]
+py-modules = []
+package-dir = { "" = "src" }
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",   # độ dài dòng do formatter/line-length quyết định
+    "SIM108", # if/else 3 nhánh đọc rõ hơn toán tử ba ngôi
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # test thêm src/ vào sys.path trước khi import
+
+[tool.ruff.lint.isort]
+known-first-party = ["checks", "config", "doctor", "insights", "jobqueue", "logutil",
+                     "make_video", "publish", "render_overlay", "schema", "topics", "tts",
+                     "upload_facebook", "fbtoken"]
