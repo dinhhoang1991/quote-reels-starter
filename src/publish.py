@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from config import root
+from jobqueue import fail as queue_fail
 from jobqueue import move as queue_move
 from jobqueue import next_pending
 from logutil import remaining_quota
@@ -17,6 +18,17 @@ from schema import load_clip
 from upload_facebook import caption_from_json, load_env, upload_reel
 
 ROOT = root()
+
+
+def describe_error(exc: BaseException) -> str:
+    """Mô tả ngắn gọn lỗi để ghi vào job trong failed/.
+
+    @param exc lỗi bắt được từ bước render/upload
+    @returns chuỗi người vận hành đọc được
+    """
+    if isinstance(exc, SystemExit):
+        return str(exc.code) if exc.code else "SystemExit"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def publish_one(
@@ -92,17 +104,16 @@ def main() -> None:
             args.skip_upload,
             args.force,
         )
+    except (SystemExit, Exception) as exc:
+        # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
+        # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
         if from_queue:
-            queue_move(json_path, "done")
-            print("→ moved to data/queue/done/")
-    except SystemExit:
-        if from_queue:
-            try:
-                queue_move(json_path, "failed")
-                print("→ moved to data/queue/failed/")
-            except Exception:
-                pass
+            dest = queue_fail(json_path, describe_error(exc))
+            print(f"→ lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
         raise
+    if from_queue:
+        dest = queue_move(json_path, "done")
+        print(f"→ moved to {dest}")
 
 
 if __name__ == "__main__":

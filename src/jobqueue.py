@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
+import time
 from pathlib import Path
 
 from config import load_config, resolve_path
@@ -43,6 +45,35 @@ def move(src: Path, status: str) -> Path:
     dest = queue_dirs()[status] / src.name
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
+    return dest
+
+
+def fail(src: Path, error: str) -> Path:
+    """Chuyển job sang failed/ kèm `_queue` (attempts, last_error, failed_at).
+
+    Ghi thẳng file đích rồi mới xoá file nguồn để job không biến mất khi lỗi giữa chừng.
+
+    @param src file JSON trong pending/
+    @param error mô tả lỗi để người vận hành đọc lại sau
+    @returns đường dẫn file trong failed/
+    """
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("không phải object JSON")
+    except (OSError, ValueError):
+        data = {"id": src.stem}
+    previous = data.get("_queue") if isinstance(data.get("_queue"), dict) else {}
+    data["_queue"] = {
+        "attempts": int(previous.get("attempts", 0)) + 1,
+        "last_error": error[:500],
+        "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    dest = queue_dirs()["failed"] / src.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if src.exists() and src.resolve() != dest.resolve():
+        src.unlink()
     return dest
 
 
