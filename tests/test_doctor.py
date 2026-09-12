@@ -11,8 +11,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checks import estimate_voice_seconds, parse_rate_percent  # noqa: E402
 import doctor  # noqa: E402
+from checks import estimate_voice_seconds, parse_rate_percent  # noqa: E402
 from config import Cfg, load_config  # noqa: E402
 from schema import load_clip, validate_clip  # noqa: E402
 
@@ -41,8 +41,8 @@ class EstimateTest(unittest.TestCase):
         estimate = estimate_voice_seconds(
             data["voice_script"], cfg.audio.voice_rate, float(cfg.audio.voice_chars_per_second)
         )
-        # Bản đọc thật của clip_001 (edge-tts, -8%) dài 41.5s.
-        self.assertAlmostEqual(estimate, 41.5, delta=4)
+        # Bản đọc thật của clip_001 (edge-tts, -8%, 363 ký tự) dài 39.9s.
+        self.assertAlmostEqual(estimate, 39.9, delta=4)
 
     def test_rate_cham_hon_thi_lau_hon(self):
         slow = estimate_voice_seconds("xin chào", "-20%", 9.2)

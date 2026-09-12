@@ -2,6 +2,8 @@
 
 Bộ khởi động làm video Reels Facebook kiểu list đời sống / tài chính.
 
+English: [README.en.md](README.en.md)
+
 Pipeline:
 
 ```
@@ -24,14 +26,29 @@ pip install -r requirements.txt
 ```
 
 Font Be Vietnam Pro (OFL) nằm trong `assets/fonts/`.
-Footage mẫu biển hoàng hôn nằm trong `assets/footage/ocean-sunset.jpg`.
+Footage mẫu biển hoàng hôn nằm trong `assets/footage/ocean-sunset.jpg` — **chỉ để chạy thử**,
+xem [assets/CREDITS.md](assets/CREDITS.md) trước khi dùng cho kênh thật.
+
+Muốn footage chuyển động: thả video vào `assets/footage/` rồi chuẩn hoá về 1080x1920/30fps:
+
+```bash
+./scripts/prepare_footage.sh   # ghi ra assets/footage/_normalized/
+```
 
 `config.yaml` **được đọc thật** — màu, giọng, volume, safe zone, hook 3s, ken burns (zoom/pan).
+
+Kiểm tra môi trường trước khi chạy (xem thêm [doctor](#kiểm-tra-trước-khi-chạy-doctor)):
+
+```bash
+python3 src/doctor.py
+```
 
 ## Chạy clip mẫu
 
 ```bash
 python3 src/make_video.py --json data/samples/clip_001.json
+# hoặc
+./scripts/run_sample.sh
 ```
 
 File ra: `assets/out/clip_001.mp4`
@@ -167,11 +184,57 @@ python3 src/upload_facebook.py --video assets/out/clip_001.mp4 --json data/sampl
 python3 src/publish.py --json data/samples/clip_001.json
 ```
 
+## Xoay vòng chủ đề và chống trùng nội dung
+
+```bash
+python3 src/topics.py list    # chủ đề, số lần đã đăng, lần cuối
+python3 src/topics.py next    # in chủ đề nên làm tiếp (ít dùng nhất, lâu nhất)
+```
+
+Danh sách chủ đề nằm trong `config.yaml` (`content.topics`). `publish.py` ghi `topic` của clip vào
+`data/published.json`, nên vòng xoay tự tính — không cần đánh dấu tay.
+
+Trước khi đăng, nội dung được so với các bài đã publish (bỏ dấu, chữ thường, so theo Jaccard):
+bài trùng khít hoặc giống từ `content.duplicate_similarity` (mặc định 85%) sẽ bị chặn kèm gợi ý
+`--force`. Đặt ngưỡng 0 để tắt.
+
+## Hiệu quả bài đăng (Insights)
+
+```bash
+python3 src/insights.py refresh   # gọi Graph cho các Reel đã publish, lưu data/insights.json
+python3 src/insights.py summary   # top clip + điểm trung bình theo chủ đề
+```
+
+Metric lấy theo `insights.metrics` trong `config.yaml`; Graph có thể từ chối vài metric tuỳ loại
+video/quyền token nên script thử lại từng metric và ghi lại cái lỗi vào `metrics_failed`.
+Dùng `summary` để biết chủ đề nào đang hiệu quả rồi ưu tiên ở vòng xoay.
+
 ## Test
 
 ```bash
 python3 -m unittest discover -s tests -t .
 ```
+
+Không cần FFmpeg, edge-tts hay token — test dùng thư viện chuẩn, tmp dir và fake HTTP layer.
+CI (`.github/workflows/ci.yml`) chạy ruff + test trên Python 3.10–3.13 và một job `doctor.py`.
+Dependency pin trong `requirements.txt`/`pyproject.toml` (hai bên phải khớp — có test kiểm tra).
+
+## Xử lý sự cố
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| `Thiếu ffmpeg` | Cài FFmpeg rồi chạy lại. Thiếu `ffprobe` vẫn chạy được (đọc duration bằng ffmpeg, chậm hơn). |
+| `Chưa cài edge-tts` / TTS lỗi mạng | `pip install edge-tts`, hoặc xuất mp3 từ Vbee/FPT rồi `--voice assets/voice/xxx.mp3`. |
+| Graph trả `code 190` | Token hết hạn/sai → `python3 src/fbtoken.py --short TOKEN`; chạy `doctor.py --online` để biết trước. |
+| Graph trả `code 4/17/32/613` | Hạn mức — script tự chờ theo `estimated_time_to_regain_access` rồi thử lại; nếu vẫn lỗi thì chờ hoặc giảm `facebook.daily_limit`. |
+| Queue đứng mãi ở một clip | Xem `data/queue/failed/<id>.json` → `_queue.last_error`; sửa rồi `python3 src/jobqueue.py move data/queue/failed/<id>.json --to pending`. |
+| `Cron khác đang chạy` | Còn lock `data/queue/.queue.lock`; nếu chắc chắn không tiến trình nào chạy thì xoá file đó. |
+| Cron không ghi log | Phải có thư mục `logs/` (cron mẫu đã `mkdir -p logs`); kiểm tra `logs/publish.log`. |
+| `OverlayFitError` | Tiêu đề/item quá dài — rút ngắn hoặc bớt item; xem trước bằng `doctor.py --json <file>`. |
+| Bản đọc bị cắt giữa câu | `voice_script` dài quá 90s; `doctor.py --json` cảnh báo trước khi gọi TTS. |
+| Sửa lời thoại mà audio không đổi | Không còn xảy ra: file cache có hash. Kiểm tra `assets/voice/` xem có file hash mới không. |
+| Video dùng nhạc/nền giả | `assets/music/` hoặc `assets/footage/` trống nên pipeline tự sinh placeholder — `doctor.py` cảnh báo. |
+| `Clip ... trùng nội dung với bài đã đăng` | Chống trùng đang chặn; sửa nội dung cho khác, hoặc `--force`, hoặc hạ `content.duplicate_similarity`. |
 
 ## Lưu ý
 
