@@ -1,0 +1,24 @@
+# Chạy pipeline Reels trong container: dữ liệu và asset nằm ở volume của host.
+#
+#   cp .env.example .env      # điền token trước khi chạy
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose exec reels python3 src/doctor.py --online
+#
+# Lịch chạy đổi bằng SCHEDULE_HOUR / SCHEDULE_MINUTE (giờ UTC) trong .env hoặc dưới đây.
+services:
+  reels:
+    build: .
+    image: quote-reels-starter:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SCHEDULE_HOUR: "7"
+      SCHEDULE_MINUTE: "0"
+      DOCTOR_STRICT: "0"
+    volumes:
+      # Asset và dữ liệu phải nằm trên host để không mất khi build lại image
+      - ./assets:/app/assets
+      - ./data:/app/data
+      - ./logs:/app/logs
