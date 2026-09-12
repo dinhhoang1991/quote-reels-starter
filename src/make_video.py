@@ -1,28 +1,150 @@
 #!/usr/bin/env python3
 """Build a 9:16 Reels video: footage + hook/full overlay + voice + ducked music.
 
-Audio: AAC stereo 48 kHz. GOP closed 2s. Duration clamped 3–90s.
+Audio: AAC stereo 48 kHz, đúng bằng độ dài video (voice được đắp silence tới hết
+clip nên `tail_seconds` và fade-out hoạt động thật). GOP closed 2s. Duration clamp 3–90s.
 Hook overlay for the first N seconds so the title is readable muted.
+Ken Burns (zoom + pan) chạy hết độ dài clip thay vì đứng hình sau vài giây.
 """
 
 from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from pathlib import Path
 
 from checks import clamp_duration, fonts_ok, probe_duration, require_ffmpeg
-from config import load_config, resolve_path, root
+from config import load_config, resolve_path
 from render_overlay import render_pair
-from schema import load_clip
+from schema import content_warnings, load_clip
 
-ROOT = root()
+KEN_BURNS_DEFAULT: dict[str, object] = {
+    "enabled": True,
+    "zoom_start": 1.0,
+    "zoom_end": 1.12,
+    "pan": "left_right",
+}
+
+# Trục pan theo tiến độ clip: (trục, hướng). None = căn giữa trục đó.
+KEN_BURNS_PAN_AXES: dict[str, tuple[str | None, str | None]] = {
+    "center": (None, None),
+    "left_right": ("x", "forward"),
+    "right_left": ("x", "backward"),
+    "top_bottom": ("y", "forward"),
+    "bottom_top": ("y", "backward"),
+}
 
 
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
+
+
+def ken_burns_options(cfg) -> dict[str, object]:
+    """video.ken_burns, chấp nhận cả dạng boolean cũ lẫn dạng dict đầy đủ."""
+    raw = cfg.video.get("ken_burns", True)
+    if isinstance(raw, bool):
+        opts = dict(KEN_BURNS_DEFAULT)
+        opts["enabled"] = raw
+        return opts
+    if hasattr(raw, "as_dict"):
+        raw = raw.as_dict()
+    if not isinstance(raw, dict):
+        raise SystemExit(f"video.ken_burns phải là true/false hoặc object, đang là {type(raw).__name__}")
+    opts = dict(KEN_BURNS_DEFAULT)
+    opts.update({key: value for key, value in raw.items() if key in opts})
+    return opts
+
+
+def ken_burns_plan(cfg, duration: float, fps: int) -> dict[str, object]:
+    """Biểu thức zoompan cho ảnh tĩnh: zoom đạt `zoom_end` đúng ở frame cuối clip."""
+    opts = ken_burns_options(cfg)
+    frames = max(int(round(duration * fps)) + 2, 2)
+    zoom_start = float(opts["zoom_start"])
+    zoom_end = float(opts["zoom_end"])
+    if zoom_end <= zoom_start:
+        raise SystemExit(
+            f"video.ken_burns.zoom_end ({zoom_end}) phải lớn hơn zoom_start ({zoom_start})"
+        )
+    pan = str(opts["pan"])
+    if pan not in KEN_BURNS_PAN_AXES:
+        raise SystemExit(
+            f"video.ken_burns.pan không hợp lệ: {pan!r} (chọn {' | '.join(KEN_BURNS_PAN_AXES)})"
+        )
+    progress = f"min(on,{frames})/{frames}"
+    axis, direction = KEN_BURNS_PAN_AXES[pan]
+    pan_expr = progress if direction == "forward" else f"(1-{progress})"
+    zoom_span = zoom_end - zoom_start
+    return {
+        "enabled": bool(opts["enabled"]),
+        "frames": frames,
+        "zoom_start": zoom_start,
+        "zoom_end": zoom_end,
+        "zoom_span": zoom_span,
+        "zoom_step": zoom_span / frames,
+        "pan": pan,
+        "progress": progress,
+        "pan_expr": pan_expr,
+        "z": f"{zoom_start:.4f}+{zoom_span:.6f}*{progress}",
+        "x": "(iw-iw/zoom)*" + (pan_expr if axis == "x" else "0.5"),
+        "y": "(ih-ih/zoom)*" + (pan_expr if axis == "y" else "0.5"),
+    }
+
+
+def ken_burns_zoom_at(plan: dict[str, object], on: int) -> float:
+    """Zoom tại frame thứ `on` của zoompan (zoompan đếm `on` từ 1).
+
+    @param plan kết quả của ken_burns_plan
+    @param on giá trị biến `on` trong biểu thức zoompan
+    @returns hệ số zoom, kẹp trong [zoom_start + zoom_step, zoom_end]
+    """
+    frames = int(plan["frames"])
+    progress = min(max(on, 1), frames) / frames
+    return float(plan["zoom_start"]) + float(plan["zoom_span"]) * progress
+
+
+def background_filter(
+    cfg, duration: float, fps: int, width: int, height: int, is_still: bool
+) -> str:
+    """Chain `[0:v]... [bg]`: ảnh tĩnh thì zoom/pan, video thì scale/crop/fps."""
+    if is_still and ken_burns_options(cfg)["enabled"]:
+        plan = ken_burns_plan(cfg, duration, fps)
+        scaled_w, scaled_h = width * 12 // 10, height * 12 // 10
+        return (
+            f"[0:v]scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
+            f"crop={scaled_w}:{scaled_h},"
+            f"zoompan=z='{plan['z']}':x='{plan['x']}':y='{plan['y']}':"
+            f"d={plan['frames']}:s={width}x{height}:fps={fps},"
+            f"setsar=1,fade=t=in:st=0:d=0.4[bg];"
+        )
+    return (
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},fps={fps},setsar=1,fade=t=in:st=0:d=0.4[bg];"
+    )
+
+
+def audio_filter(cfg, duration: float, fade_out_start: float) -> str:
+    """Voice + music trộn đúng `duration` giây.
+
+    `apad=whole_dur` đắp silence cho voice tới hết clip; nếu thiếu bước này thì
+    `amix=duration=first` cắt audio theo voice và fade-out ở cuối không bao giờ chạy.
+    """
+    sr = int(cfg.audio.sample_rate)
+    vol = float(cfg.audio.music_volume)
+    duck = cfg.audio.ducking
+    head_ms = int(float(cfg.audio.head_seconds) * 1000)
+    return (
+        f"[1:a]aresample={sr},aformat=channel_layouts=stereo,"
+        f"adelay={head_ms}|{head_ms},apad=whole_dur={duration:.3f}[voice];"
+        f"[voice]asplit=2[voice_mix][voice_sc];"
+        f"[2:a]aresample={sr},aformat=channel_layouts=stereo,volume={vol}[m];"
+        f"[m][voice_sc]sidechaincompress=threshold={duck.threshold}:ratio={duck.ratio}:"
+        f"attack={duck.attack}:release={duck.release}:makeup=2[ducked];"
+        f"[voice_mix][ducked]amix=inputs=2:duration=first:dropout_transition=2,"
+        f"loudnorm=I=-16:TP=-1.5:LRA=11,"
+        f"aformat=sample_fmts=fltp:sample_rates={sr}:channel_layouts=stereo,"
+        f"afade=t=in:st=0:d=0.25,afade=t=out:st={fade_out_start:.2f}:d=0.45[a]"
+    )
 
 
 def first_file(folder: Path, exts: tuple[str, ...]) -> Path | None:
@@ -116,6 +238,8 @@ def build(
     fonts_ok()
     cfg = load_config()
     data = load_clip(json_path)
+    for warning in content_warnings(data):
+        print(f"Cảnh báo nội dung: {warning}")
 
     width, height, fps = int(cfg.video.width), int(cfg.video.height), int(cfg.video.fps)
     fonts_dir = resolve_path(cfg.paths.fonts_dir)
@@ -155,42 +279,16 @@ def build(
 
     sr = int(cfg.audio.sample_rate)
     ch = int(cfg.audio.channels)
-    vol = float(cfg.audio.music_volume)
-    duck = cfg.audio.ducking
-    head_ms = int(head * 1000)
     fade_out_start = max(duration - 0.5, 0.2)
     gop = int(cfg.video.gop)
     crf = int(cfg.video.crf)
-    ken = bool(cfg.video.get("ken_burns", True)) and is_still
-
-    if ken:
-        frames = int(duration * fps) + 2
-        bg = (
-            f"[0:v]scale={width * 12 // 10}:{height * 12 // 10},"
-            f"zoompan=z='min(zoom+0.00055,1.12)':x='iw/2-(iw/zoom/2)':"
-            f"y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={fps},"
-            f"setsar=1,fade=t=in:st=0:d=0.4[bg];"
-        )
-    else:
-        bg = (
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},fps={fps},setsar=1,fade=t=in:st=0:d=0.4[bg];"
-        )
 
     filter_complex = (
-        bg
+        background_filter(cfg, duration, fps, width, height, is_still)
         + f"[bg][3:v]overlay=0:0:enable='lt(t,{hook_s:.2f})':format=auto[v1];"
         + f"[v1][4:v]overlay=0:0:enable='gte(t,{hook_s:.2f})':format=auto,"
         + f"fade=t=out:st={fade_out_start:.2f}:d=0.45[v];"
-        + f"[1:a]aresample={sr},aformat=channel_layouts=stereo,adelay={head_ms}|{head_ms}[voice];"
-        + f"[voice]asplit=2[voice_mix][voice_sc];"
-        + f"[2:a]aresample={sr},aformat=channel_layouts=stereo,volume={vol}[m];"
-        + f"[m][voice_sc]sidechaincompress=threshold={duck.threshold}:ratio={duck.ratio}:"
-        + f"attack={duck.attack}:release={duck.release}:makeup=2[ducked];"
-        + f"[voice_mix][ducked]amix=inputs=2:duration=first:dropout_transition=2,"
-        + f"loudnorm=I=-16:TP=-1.5:LRA=11,"
-        + f"aformat=sample_fmts=fltp:sample_rates={sr}:channel_layouts=stereo,"
-        + f"afade=t=in:st=0:d=0.25,afade=t=out:st={fade_out_start:.2f}:d=0.45[a]"
+        + audio_filter(cfg, duration, fade_out_start)
     )
 
     cmd = [

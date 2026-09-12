@@ -6,7 +6,13 @@ video:
   max_seconds: 90
   crf: 20
   gop: 60
-  ken_burns: true
+  # Zoom/pan cho footage ảnh (still). `pan`: center | left_right | right_left |
+  # top_bottom | bottom_top. Zoom chạy hết đúng độ dài clip, không đứng hình.
+  ken_burns:
+    enabled: true
+    zoom_start: 1.0
+    zoom_end: 1.12
+    pan: left_right
 
 safe_zone:
   top: 200
@@ -17,6 +23,8 @@ safe_zone:
 hook:
   seconds: 3.0
   title_size: 78
+  # Cỡ chữ tiêu đề khi hiện full list (hook dùng title_size). Tự co lại nếu chữ dài.
+  full_title_size: 62
 
 style:
   title_color: "#FF2A2A"

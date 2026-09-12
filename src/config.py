@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,10 @@ class Cfg:
         if isinstance(value, dict) and not isinstance(value, Cfg):
             return Cfg(value)
         return value
+
+    def as_dict(self) -> dict[str, Any]:
+        """Raw nested values, detached from this Cfg so callers can mutate freely."""
+        return deepcopy(self._data)
 
     def __getitem__(self, key: str) -> Any:
         return self.get(key)

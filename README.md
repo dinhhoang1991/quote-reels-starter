@@ -26,7 +26,7 @@ pip install -r requirements.txt
 Font Be Vietnam Pro (OFL) nằm trong `assets/fonts/`.
 Footage mẫu biển hoàng hôn nằm trong `assets/footage/ocean-sunset.jpg`.
 
-`config.yaml` **được đọc thật** — màu, giọng, volume, safe zone, hook 3s.
+`config.yaml` **được đọc thật** — màu, giọng, volume, safe zone, hook 3s, ken burns (zoom/pan).
 
 ## Chạy clip mẫu
 
@@ -39,7 +39,9 @@ File ra: `assets/out/clip_001.mp4`
 - 3 giây đầu: chỉ tiêu đề (đọc được khi tắt tiếng).
 - Sau đó: đủ list.
 - Nhạc tự hạ khi có giọng (sidechain ducking).
+- Audio dài **đúng bằng video**: voice được đắp silence hết `tail_seconds` nên fade-out ở cuối chạy thật.
 - Audio AAC stereo 48 kHz, GOP 2s — đúng spec Reels API (3–90 giây).
+- Ảnh tĩnh được zoom/pan (Ken Burns) trải hết độ dài clip — xem `video.ken_burns` trong `config.yaml`.
 
 Làm cả 2 mẫu:
 
@@ -91,6 +93,13 @@ python3 src/publish.py --queue
 Clip xong → `data/queue/done/`. Lỗi → `data/queue/failed/`.
 Log đăng: `data/published.json` (chống đăng trùng + đếm 30 Reels / 24h).
 
+Mọi lỗi trong lúc render/upload (kể cả FFmpeg chết) đều đẩy clip sang `data/queue/failed/`
+kèm `_queue.attempts` + `_queue.last_error`, nên cron không bị kẹt ở đúng clip lỗi. Muốn thử lại:
+
+```bash
+python3 src/jobqueue.py move data/queue/failed/clip_001.json --to pending
+```
+
 Cron: xem `scripts/cron.example`.
 
 ## Tự động đăng Facebook Page
@@ -136,7 +145,7 @@ python3 src/publish.py --json data/samples/clip_001.json
 ## Test
 
 ```bash
-python3 -m unittest tests/test_schema.py
+python3 -m unittest discover -s tests -t .
 ```
 
 ## Lưu ý
@@ -144,6 +153,10 @@ python3 -m unittest tests/test_schema.py
 - Giữ footage thật, đừng gen video AI cho kênh chính.
 - 1 giọng / 1 template xuyên suốt kênh.
 - 3 giây đầu phải đọc được tiêu đề khi tắt tiếng — script tự render overlay hook.
+- Tiêu đề và items tự co cỡ chữ cho vừa safe zone. Nếu vẫn không vừa (quá nhiều item/quá dài),
+  script dừng và báo lỗi rõ thay vì vẽ tràn ra ngoài khung.
+- Nội dung vượt luật biên tập trong `prompts/generate_list.md` (title quá 8 chữ, item quá dài,
+  không đủ 8–10 items) chỉ **cảnh báo**, không chặn render.
 - Safe zone: top 200px, bottom 360px (UI Facebook).
 - Đăng page phụ 7–14 ngày trước khi đưa sang page chính.
 - Không dùng tool giả lập app / cookie / selenium để đăng profile.

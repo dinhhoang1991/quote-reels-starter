@@ -19,7 +19,7 @@ from pathlib import Path
 from checks import probe_duration
 from config import load_config, root
 from logutil import assert_can_publish, record_publish, remaining_quota
-from schema import load_clip, validate_clip
+from schema import load_clip
 
 try:
     import requests
