@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from config import load_config, resolve_path
+from schema import content_signature, content_similarity
 
 PUBLISHED_STATE = "PUBLISHED"
+DEFAULT_SIMILARITY = 0.85
 
 
 def log(message: str) -> None:
@@ -74,24 +76,91 @@ def remaining_quota() -> int:
     return max(0, limit - len(posts_last_24h()))
 
 
-def assert_can_publish(clip_id: str, force: bool = False) -> None:
+def duplicate_content(data: dict[str, Any], threshold: float | None = None) -> dict[str, Any] | None:
+    """Bài đã publish có nội dung trùng hoặc quá giống clip này.
+
+    So fingerprint trước (trùng khít), rồi tới Jaccard trên token nội dung.
+
+    @param data clip đã validate
+    @param threshold ngưỡng giống nhau 0–1, mặc định `content.duplicate_similarity`; <=0 là tắt
+    @returns entry trong published log bị coi là trùng, None nếu không
+    """
+    cfg = load_config()
+    if threshold is None:
+        threshold = float(cfg.get("content", {}).get("duplicate_similarity", DEFAULT_SIMILARITY))
+    if threshold <= 0:
+        return None
+    signature = content_signature(data)
+    tokens = signature["tokens"]
+    for post in load_log().get("posts", []):
+        if str(post.get("state", "")).upper() != PUBLISHED_STATE:
+            continue
+        stored = post.get("content") or {}
+        if stored.get("fingerprint") and stored["fingerprint"] == signature["fingerprint"]:
+            return post
+        similarity = content_similarity(tokens, list(stored.get("tokens") or []))
+        if similarity >= threshold:
+            post = dict(post)
+            post["_similarity"] = round(similarity, 3)
+            return post
+    return None
+
+
+def assert_can_publish(
+    clip_id: str, force: bool = False, data: dict[str, Any] | None = None
+) -> None:
+    """Chặn khi hết hạn mức 24h, khi clip đã đăng, hoặc khi nội dung quá giống bài cũ.
+
+    @param clip_id id clip
+    @param force bỏ qua các kiểm tra chống trùng
+    @param data clip đã validate (cần để so trùng nội dung)
+    @raises SystemExit khi không được đăng
+    """
     cfg = load_config()
     limit = int(cfg.facebook.daily_limit)
     used = len(posts_last_24h())
     if used >= limit:
         raise SystemExit(f"Đã đủ {limit} Reels / 24h. Đợi hoặc xem data/published.json.")
-    if not force:
-        prev = already_published(clip_id)
-        if prev:
-            raise SystemExit(
-                f"Clip {clip_id} đã đăng (video_id={prev.get('video_id')}). "
-                f"Dùng --force nếu muốn đăng lại."
-            )
+    if force:
+        return
+    prev = already_published(clip_id)
+    if prev:
+        raise SystemExit(
+            f"Clip {clip_id} đã đăng (video_id={prev.get('video_id')}). "
+            f"Dùng --force nếu muốn đăng lại."
+        )
+    if not data:
+        return
+    duplicate = duplicate_content(data)
+    if duplicate:
+        similar = duplicate.get("_similarity")
+        how = f"giống {similar:.0%}" if similar is not None else "trùng nội dung"
+        raise SystemExit(
+            f"Clip {data.get('id', clip_id)} {how} với bài đã đăng "
+            f"{duplicate.get('clip_id')} ({duplicate.get('url')}). "
+            f"Dùng --force nếu vẫn muốn đăng."
+        )
 
 
-def record_publish(clip_id: str, video_id: str, state: str, url: str, extra: dict | None = None) -> None:
-    data = load_log()
-    posts = data.setdefault("posts", [])
+def record_publish(
+    clip_id: str,
+    video_id: str,
+    state: str,
+    url: str,
+    extra: dict | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Ghi 1 lần đăng vào data/published.json.
+
+    @param clip_id id clip
+    @param video_id id video trên Facebook
+    @param state PUBLISHED | DRAFT | ...
+    @param url link reel
+    @param extra field phụ (title, topic…)
+    @param data clip đã validate, dùng để lưu chữ ký nội dung chống trùng
+    """
+    log_data = load_log()
+    posts = log_data.setdefault("posts", [])
     entry = {
         "clip_id": clip_id,
         "video_id": video_id,
@@ -100,7 +169,9 @@ def record_publish(clip_id: str, video_id: str, state: str, url: str, extra: dic
         "ts": time.time(),
         "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if data:
+        entry["content"] = content_signature(data)
     if extra:
         entry.update(extra)
     posts.append(entry)
-    save_log(data)
+    save_log(log_data)

@@ -66,6 +66,30 @@ queue:
   # Lock cũ hơn số giây dưới đây (process chết, máy reboot) bị coi là rác và lấy lại.
   stale_lock_seconds: 3600
 
+content:
+  # Chặn đăng bài quá giống bài đã publish (Jaccard trên nội dung đã chuẩn hoá).
+  # 0.85 = trùng từ 85% nội dung trở lên; đặt 0 để tắt.
+  duplicate_similarity: 0.85
+  # Chủ đề xoay vòng — `python3 src/topics.py next` chọn cái ít dùng nhất, lâu nhất.
+  topics:
+    - Phân loại tài sản theo thu nhập mỗi tháng
+    - Cách sống đẳng cấp sau tuổi 30
+    - Cách gia tăng tài sản theo số vốn
+    - Kiểu người dễ thành công
+    - Cổ nhân nói về đạo vợ chồng
+    - Thói quen người giàu làm mỗi sáng
+    - Sai lầm tài chính trước tuổi 35
+    - Dấu hiệu bạn đang dừng ở tầng trung lưu
+
+insights:
+  # Metric của Graph `video_insights`; tuỳ loại video/quyền token mà Graph từ chối một số metric
+  # (script tự thử lại từng metric và ghi lại cái lỗi vào data/insights.json).
+  metrics:
+    - blue_reels_play_count
+    - post_video_views
+    - post_video_avg_time_watched
+    - post_reactions_by_type_total
+
 paths:
   fonts_dir: assets/fonts
   footage_dir: assets/footage
@@ -75,6 +99,7 @@ paths:
   out_dir: assets/out
   queue_dir: data/queue
   published_log: data/published.json
+  insights_log: data/insights.json
   title_font: BeVietnamPro-Black.ttf
   body_font: BeVietnamPro-ExtraBold.ttf
   footer_font: BeVietnamPro-SemiBold.ttf

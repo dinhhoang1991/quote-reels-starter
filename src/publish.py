@@ -69,6 +69,7 @@ def publish_one(
         version,
         clip_id=data["id"],
         force=force,
+        clip=data,
     )
     log(f"reel: {result.get('reel_url')}")
     print(json.dumps(result, ensure_ascii=False, indent=2))

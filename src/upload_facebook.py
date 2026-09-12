@@ -296,7 +296,15 @@ def upload_reel(
     scheduled_ts: int | None = None,
     clip_id: str = "",
     force: bool = False,
+    clip: dict | None = None,
 ) -> dict:
+    """Đăng 1 video lên Page dưới dạng Reel.
+
+    @param clip_id id clip để chống đăng trùng, rỗng thì bỏ qua log
+    @param force đăng lại dù đã có trong log / trùng nội dung
+    @param clip clip đã validate, dùng để lưu chữ ký nội dung + topic
+    @returns response của bước finish kèm video_id/reel_url
+    """
     cfg = load_config()
     retries = int(cfg.facebook.max_retries)
     duration = probe_duration(video_path)
@@ -304,7 +312,7 @@ def upload_reel(
     if duration < lo or duration > hi:
         raise SystemExit(f"Video {duration:.1f}s ngoài khoảng Reels {lo:.0f}–{hi:.0f}s")
     if clip_id:
-        assert_can_publish(clip_id, force=force)
+        assert_can_publish(clip_id, force=force, data=clip)
     log(f"Quota còn {remaining_quota()}/{cfg.facebook.daily_limit} trong 24h")
     log("1) START session")
     video_id, upload_url = start_session(page_id, token, version, retries)
@@ -320,7 +328,14 @@ def upload_reel(
     result["video_id"] = video_id
     result["reel_url"] = f"https://www.facebook.com/reel/{video_id}"
     if clip_id:
-        record_publish(clip_id, video_id, state, result["reel_url"], {"title": title})
+        record_publish(
+            clip_id,
+            video_id,
+            state,
+            result["reel_url"],
+            {"title": title, "topic": str((clip or {}).get("topic", ""))},
+            data=clip,
+        )
     return result
 
 
@@ -373,6 +388,7 @@ def main() -> None:
         scheduled_ts=args.at or None,
         clip_id=clip_id,
         force=args.force,
+        clip=data or None,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

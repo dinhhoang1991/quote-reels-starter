@@ -60,7 +60,8 @@ def check_environment() -> list[Check]:
     """Python, thư viện Python, ffmpeg/ffprobe."""
     checks: list[Check] = []
     version = ".".join(str(part) for part in sys.version_info[:3])
-    if sys.version_info >= (3, 10):
+    # `requires-python` đã khai báo >=3.10, nhưng người chạy bằng interpreter cũ vẫn cần biết lý do.
+    if sys.version_info >= (3, 10):  # noqa: UP036
         checks.append(Check(OK, "python", version))
     else:
         checks.append(Check(FAIL, "python", f"{version} — cần 3.10+"))
@@ -289,6 +290,40 @@ def _debug_token(page_token: str, app_id: str, app_secret: str, version: str) ->
     return payload.get("data") or {}
 
 
+def check_content(cfg: Cfg) -> list[Check]:
+    """Chống trùng nội dung, xoay vòng chủ đề và độ mới của insights."""
+    from insights import load_insights  # import muộn: kéo theo requests
+    from topics import configured_topics, next_topic, rotation_report
+
+    checks: list[Check] = []
+    threshold = float((cfg.get("content", {}) or {}).get("duplicate_similarity", 0.85))
+    checks.append(
+        Check(OK if threshold > 0 else WARN, "chống trùng nội dung",
+              f"chặn bài giống từ {threshold:.0%}" if threshold > 0 else "đang tắt (ngưỡng 0)")
+    )
+
+    topics = configured_topics(cfg)
+    if not topics:
+        checks.append(Check(WARN, "chủ đề", "content.topics trống — xoay vòng thủ công"))
+    else:
+        report = rotation_report(cfg)
+        unused = sum(1 for _, count, _ in report if count == 0)
+        checks.append(
+            Check(OK, "chủ đề",
+                  f"{len(topics)} chủ đề, {unused} chưa dùng, tiếp theo: {next_topic(cfg)}")
+        )
+
+    data = load_insights()
+    videos = data.get("videos") or {}
+    fetched = str(data.get("fetched_at") or "chưa cập nhật")
+    checks.append(
+        Check(OK if videos else WARN, "insights",
+              f"{len(videos)} video, cập nhật {fetched}" if videos
+              else "chưa có — chạy: python3 src/insights.py refresh")
+    )
+    return checks
+
+
 def check_token(cfg: Cfg, online: bool) -> list[Check]:
     """Sự có mặt của .env/token, và khi --online thì hỏi Graph về hạn/quyền của token."""
     checks: list[Check] = []
@@ -345,7 +380,7 @@ def check_token(cfg: Cfg, online: bool) -> list[Check]:
         Check(OK if not missing else FAIL, "FB quyền",
               ", ".join(sorted(scopes)) if not missing else f"thiếu {', '.join(sorted(missing))}")
     )
-    profile = str((data.get("profile_id") or data.get("user_id") or "")).strip()
+    profile = str(data.get("profile_id") or data.get("user_id") or "").strip()
     if profile and page_id and profile != page_id:
         checks.append(Check(WARN, "FB page", f"token thuộc {profile}, .env ghi {page_id}"))
     else:
@@ -364,6 +399,7 @@ def run_all(json_path: Path | None = None, online: bool = False) -> list[Check]:
     checks = check_environment()
     checks += check_assets(cfg)
     checks += check_config(cfg)
+    checks += check_content(cfg)
     checks += check_queue(cfg)
     checks += check_token(cfg, online)
     if json_path is not None:
