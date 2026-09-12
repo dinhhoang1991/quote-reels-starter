@@ -82,6 +82,21 @@ python3 src/make_video.py --json data/samples/clip_001.json --voice assets/voice
 `--voice` ở `make_video.py` / `publish.py` là **đường dẫn file**.
 `--voice` ở `tts.py` là **tên giọng Neural**.
 
+Bản đọc được cache trong `assets/voice/` theo tên `clip_001.<hash>.mp3`, hash của
+(lời thoại + giọng + rate) — sửa lời thoại hoặc đổi giọng là render ra bản đọc mới,
+không dùng lại bản cũ. File cũ không tự xoá, thỉnh thoảng dọn tay.
+
+## Kiểm tra trước khi chạy (doctor)
+
+```bash
+python3 src/doctor.py                                    # môi trường, asset, config, hàng chờ
+python3 src/doctor.py --json data/samples/clip_001.json  # thêm 1 clip: nội dung, độ dài đọc, overlay
+python3 src/doctor.py --online                           # gọi Graph debug_token: hạn + quyền
+```
+
+Mỗi dòng là `[ok]` / `[warn]` / `[fail]`; exit code 1 khi có `[fail]`.
+`--online` cần `FB_APP_ID` + `FB_APP_SECRET` trong `.env` và cảnh báo trước khi token hết hạn.
+
 ## Hàng chờ mỗi ngày
 
 ```bash
@@ -91,7 +106,8 @@ python3 src/publish.py --queue
 ```
 
 Clip xong → `data/queue/done/`. Lỗi → `data/queue/failed/`.
-Log đăng: `data/published.json` (chống đăng trùng + đếm 30 Reels / 24h).
+Log đăng: `data/published.json` (chống đăng trùng; hạn mức 30 Reels/24h chỉ tính bài `PUBLISHED`,
+bản `DRAFT` không bị trừ oan).
 
 Mọi lỗi trong lúc render/upload (kể cả FFmpeg chết) đều đẩy clip sang `data/queue/failed/`
 kèm `_queue.attempts` + `_queue.last_error`, nên cron không bị kẹt ở đúng clip lỗi. Muốn thử lại:
@@ -99,6 +115,10 @@ kèm `_queue.attempts` + `_queue.last_error`, nên cron không bị kẹt ở đ
 ```bash
 python3 src/jobqueue.py move data/queue/failed/clip_001.json --to pending
 ```
+
+`--queue` giữ lock `data/queue/.queue.lock`: cron chạy chồng sẽ bị chặn thay vì lấy trùng clip.
+Lock cũ hơn `queue.stale_lock_seconds` (mặc định 1 giờ) bị coi là rác và lấy lại.
+Log in ra có timestamp UTC; `scripts/cron.example` ghi vào `logs/`.
 
 Cron: xem `scripts/cron.example`.
 
@@ -109,6 +129,11 @@ API chính thức **chỉ đăng lên Page**. Tối đa **30 Reels API / Page / 
 Quyền: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`.
 User là admin Page, task `CREATE_CONTENT`.
 App phải **Live** (hoặc user là tester) — Development mode không đăng được cho người ngoài.
+
+Lỗi hạn mức của Graph trả về HTTP 400 kèm `error.code` 4 / 17 / 32 / 613 — script nhận diện
+và thử lại theo `estimated_time_to_regain_access` (kẹp bởi `facebook.retry_max_delay_seconds`),
+đồng thời in `X-App-Usage` / `X-Business-Use-Case-Usage` để biết đang dùng bao nhiêu % hạn mức.
+Lỗi thật (token sai, thiếu quyền) fail ngay, không thử lại.
 
 ### Token ~60 ngày
 
@@ -160,5 +185,8 @@ python3 -m unittest discover -s tests -t .
 - Safe zone: top 200px, bottom 360px (UI Facebook).
 - Đăng page phụ 7–14 ngày trước khi đưa sang page chính.
 - Không dùng tool giả lập app / cookie / selenium để đăng profile.
-- Token hết hạn thì clip render vẫn chạy, chỉ bước upload lỗi.
+- Token hết hạn thì clip render vẫn chạy, chỉ bước upload lỗi. Chạy
+  `python3 src/doctor.py --online` định kỳ (xem `scripts/cron.example`) để biết trước khi hết hạn.
+- Bản đọc quá 90 giây sẽ bị cắt giữa câu — script cảnh báo trước khi render (và `doctor.py`
+  cảnh báo trước cả khi gọi TTS, dựa trên số ký tự).
 - `SCHEDULED` không nằm trong docs Reels API — đừng phụ thuộc.

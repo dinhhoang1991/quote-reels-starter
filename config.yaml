@@ -39,6 +39,9 @@ style:
 audio:
   voice_rate: "-8%"
   voice_name: "vi-VN-NamMinhNeural"
+  # Heuristic để cảnh báo script quá dài TRƯỚC khi gọi TTS (sai số ~±15%).
+  # Hiệu chuẩn trên vi-VN-NamMinhNeural: 353 ký tự ≈ 41.5s ở rate -8%.
+  voice_chars_per_second: 9.2
   music_volume: 0.12
   tail_seconds: 1.2
   head_seconds: 0.6
@@ -54,6 +57,14 @@ facebook:
   api_version: "v26.0"
   daily_limit: 30
   max_retries: 3
+  # Trần thời gian chờ giữa 2 lần thử lại; Graph trả estimated_time_to_regain_access
+  # cho lỗi hạn mức (code 4/17/32/613) và giá trị đó bị kẹp bởi trần này.
+  retry_max_delay_seconds: 900
+
+queue:
+  # `publish.py --queue` giữ lock này để 2 cron không lấy cùng 1 clip.
+  # Lock cũ hơn số giây dưới đây (process chết, máy reboot) bị coi là rác và lấy lại.
+  stale_lock_seconds: 3600
 
 paths:
   fonts_dir: assets/fonts

@@ -216,10 +216,12 @@ def ensure_voice(data: dict, voice: Path | None) -> Path:
         if not voice.exists():
             raise SystemExit(f"Không thấy file giọng: {voice}")
         return voice
-    dest = resolve_path(cfg.paths.voice_dir) / f"{data['id']}.mp3"
+    from tts import synth, voice_path
+
+    dest = voice_path(data, cfg)
     if dest.exists():
+        print(f"Dùng lại bản đọc đã cache: {dest.name}")
         return dest
-    from tts import synth
     import asyncio
 
     asyncio.run(
@@ -250,6 +252,12 @@ def build(
     voice_dur = probe_duration(voice)
     head = float(cfg.audio.head_seconds)
     tail = float(cfg.audio.tail_seconds)
+    max_seconds = float(cfg.video.max_seconds)
+    if voice_dur + head + tail > max_seconds:
+        print(
+            f"Cảnh báo: bản đọc dài {voice_dur:.1f}s, vượt {max_seconds:.0f}s của Reels — "
+            f"video sẽ bị cắt giữa câu. Rút ngắn voice_script hoặc tách thành 2 clip."
+        )
     duration = clamp_duration(voice_dur + head + tail)
     hook_s = min(float(cfg.hook.seconds), max(duration - 0.4, 0.8))
 
