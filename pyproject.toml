@@ -20,6 +20,10 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/dinhhoang1991/quote-reels-starter"
 
+# Repo chạy từ checkout (`python3 src/...`) vì config.yaml, assets/ và data/ được resolve
+# theo thư mục gốc repo — đây không phải package để `pip install`.
+# `py-modules = []` là CỐ Ý: `pip install .` chỉ lấy metadata, không đẩy các module tên chung
+# (config, schema, logutil…) vào site-packages. tests/test_packaging.py khoá hành vi này lại.
 [tool.setuptools]
 py-modules = []
 package-dir = { "" = "src" }

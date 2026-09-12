@@ -25,6 +25,10 @@ cd quote-reels-starter
 pip install -r requirements.txt
 ```
 
+Repo chạy trực tiếp từ checkout (`python3 src/...`): `config.yaml`, `assets/` và `data/` được
+resolve theo thư mục gốc repo, nên `pip install .` chỉ lấy metadata chứ không cài script —
+đừng kỳ vọng chạy được từ site-packages.
+
 Font Be Vietnam Pro (OFL) nằm trong `assets/fonts/`.
 Footage mẫu biển hoàng hôn nằm trong `assets/footage/ocean-sunset.jpg` — **chỉ để chạy thử**,
 xem [assets/CREDITS.md](assets/CREDITS.md) trước khi dùng cho kênh thật.

@@ -58,6 +58,13 @@ class PyprojectTest(unittest.TestCase):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
         self.assertIn("Copyright (c) 2026 dinhhoang1991", license_text)
 
+    def test_khong_ban_script_nhu_package(self):
+        """`pip install .` chỉ lấy metadata: module tên chung không bị đẩy vào site-packages."""
+        self.assertEqual(self.data["tool"]["setuptools"]["py-modules"], [])
+        for readme in ("README.md", "README.en.md"):
+            text = (ROOT / readme).read_text(encoding="utf-8")
+            self.assertIn("checkout", text, readme)
+
 
 class WorkflowTest(unittest.TestCase):
     def setUp(self):

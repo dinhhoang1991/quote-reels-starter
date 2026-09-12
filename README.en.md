@@ -26,6 +26,9 @@ python3 src/doctor.py          # check env, assets, config, queue
 python3 src/doctor.py --json data/samples/clip_001.json   # check one clip
 ```
 
+Run the pipeline from a checkout: `config.yaml`, `assets/` and `data/` resolve from the repo root,
+so `pip install .` only installs metadata, not the scripts.
+
 ## Render a sample
 
 ```bash
