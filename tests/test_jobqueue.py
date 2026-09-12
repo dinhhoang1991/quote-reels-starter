@@ -2,8 +2,10 @@
 """Queue: mọi lỗi (kể cả ffmpeg) phải đưa job sang failed/ kèm attempts + last_error."""
 
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -92,6 +94,46 @@ class QueueFailureTest(unittest.TestCase):
         self.assertEqual(publish.describe_error(SystemExit("hết hạn token")), "hết hạn token")
         self.assertEqual(publish.describe_error(SystemExit()), "SystemExit")
         self.assertEqual(publish.describe_error(ValueError("xấu")), "ValueError: xấu")
+
+
+class QueueLockTest(QueueFailureTest):
+    def test_lock_chan_lan_chay_thu_hai(self):
+        with jobqueue.queue_lock() as path:
+            self.assertTrue(path.exists())
+            with self.assertRaises(SystemExit):
+                with jobqueue.queue_lock():
+                    self.fail("không được lấy lock lần hai")
+        self.assertFalse(path.exists())
+        # Thoát ra là lấy lại được.
+        with jobqueue.queue_lock():
+            pass
+
+    def test_lock_cu_bi_lay_lai(self):
+        path = jobqueue.lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("99999 process đã chết\n", encoding="utf-8")
+        old = time.time() - 7200
+        os.utime(path, (old, old))
+        with jobqueue.queue_lock(stale_seconds=60) as locked:
+            self.assertEqual(locked, path)
+        self.assertFalse(path.exists())
+
+    def test_lock_moi_thi_khong_bi_lay(self):
+        path = jobqueue.lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("99999\n", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            with jobqueue.queue_lock(stale_seconds=3600):
+                self.fail("lock mới thì không được lấy")
+        path.unlink()
+
+    def test_publish_queue_nha_lock_sau_khi_chay(self):
+        path = jobqueue.lock_path()
+        with mock.patch.object(publish, "publish_one"):
+            with mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"]):
+                publish.main()
+        self.assertFalse(path.exists())
+        self.assertFalse(self.job.exists())
 
 
 if __name__ == "__main__":

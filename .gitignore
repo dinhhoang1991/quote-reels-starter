@@ -5,7 +5,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .DS_Store
-logs/
 *.zip
 
 assets/out/*
@@ -25,3 +24,9 @@ data/queue/failed/*
 !data/queue/failed/.gitkeep
 data/queue/pending/*
 !data/queue/pending/.gitkeep
+
+# Lock hàng chờ — chỉ có ý nghĩa khi 1 tiến trình đang chạy
+data/queue/.queue.lock
+
+logs/*
+!logs/.gitkeep

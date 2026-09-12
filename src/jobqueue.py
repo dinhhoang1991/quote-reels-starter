@@ -5,12 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from config import load_config, resolve_path
 from schema import load_clip
+
+LOCK_NAME = ".queue.lock"
+DEFAULT_STALE_SECONDS = 3600.0
 
 
 def queue_dirs() -> dict[str, Path]:
@@ -46,6 +52,42 @@ def move(src: Path, status: str) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
     return dest
+
+
+def lock_path() -> Path:
+    """File lock nằm cạnh pending/done/failed, không nằm trong chúng."""
+    return queue_dirs()["pending"].parent / LOCK_NAME
+
+
+@contextmanager
+def queue_lock(stale_seconds: float = DEFAULT_STALE_SECONDS) -> Iterator[Path]:
+    """Khoá hàng chờ để 2 cron không lấy cùng một clip.
+
+    Lock cũ hơn `stale_seconds` (process chết, máy reboot) được coi là rác và lấy lại.
+
+    @param stale_seconds tuổi tối đa của lock trước khi bị coi là rác
+    @raises SystemExit khi có tiến trình khác đang giữ lock
+    """
+    path = lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            age = time.time() - path.stat().st_mtime
+            if age <= stale_seconds:
+                raise SystemExit(
+                    f"Cron khác đang chạy (lock {path} cũ {age / 60:.0f} phút). "
+                    f"Xoá file đó nếu chắc chắn không còn tiến trình nào."
+                )
+            path.unlink(missing_ok=True)
+    try:
+        os.write(fd, f"{os.getpid()} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n".encode())
+        os.close(fd)
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def fail(src: Path, error: str) -> Path:

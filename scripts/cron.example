@@ -1,6 +1,11 @@
 # Ví dụ crontab. Sửa đường dẫn rồi: crontab -e
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
+ROOT=/ABS/PATH/quote-reels-starter
 
-# 07:00 mỗi sáng: lấy 1 JSON trong data/queue/pending, render + đăng
-0 7 * * * cd /ABS/PATH/quote-reels-starter && /usr/bin/python3 src/publish.py --queue >> logs/publish.log 2>&1
+# 07:00 mỗi sáng: lấy 1 JSON trong data/queue/pending, render + đăng.
+# mkdir -p vì cron không tự tạo thư mục logs; lock trong jobqueue chặn 2 cron chạy chồng.
+0 7 * * * cd "$ROOT" && mkdir -p logs && /usr/bin/python3 src/publish.py --queue >> logs/publish.log 2>&1
+
+# 08:00 Chủ nhật: kiểm tra môi trường/asset/token, cảnh báo trước khi token ~60 ngày hết hạn
+0 8 * * 0 cd "$ROOT" && mkdir -p logs && /usr/bin/python3 src/doctor.py --online >> logs/doctor.log 2>&1

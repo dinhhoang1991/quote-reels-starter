@@ -6,18 +6,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
-from config import root
+from config import load_config, root
 from jobqueue import fail as queue_fail
 from jobqueue import move as queue_move
-from jobqueue import next_pending
-from logutil import remaining_quota
+from jobqueue import next_pending, queue_lock
+from logutil import log, remaining_quota
 from make_video import build
 from schema import load_clip
 from upload_facebook import caption_from_json, load_env, upload_reel
 
 ROOT = root()
+DEFAULT_STALE_LOCK_SECONDS = 3600.0
 
 
 def describe_error(exc: BaseException) -> str:
@@ -43,7 +45,7 @@ def publish_one(
     load_env(ROOT / ".env")
     data = load_clip(json_path)
     video = build(json_path, footage, music, voice)
-    print("Video:", video)
+    log(f"video: {video}")
     if skip_upload:
         return
 
@@ -54,7 +56,7 @@ def publish_one(
     if not page_id or not token:
         raise SystemExit("Đã render xong nhưng chưa có token. Điền .env rồi chạy src/upload_facebook.py")
 
-    print(f"Quota còn {remaining_quota()} Reels trong 24h")
+    log(f"quota còn {remaining_quota()} Reels trong 24h")
     title = " ".join(data.get("title", "").split())
     caption = caption_from_json(data, tags)
     result = upload_reel(
@@ -68,7 +70,7 @@ def publish_one(
         clip_id=data["id"],
         force=force,
     )
-    print("Reel:", result.get("reel_url"))
+    log(f"reel: {result.get('reel_url')}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
@@ -85,35 +87,40 @@ def main() -> None:
     args = parser.parse_args()
 
     json_path: Path | None = Path(args.json) if args.json else None
-    from_queue = False
-    if args.queue or json_path is None:
-        nxt = next_pending()
-        if nxt is None:
-            raise SystemExit("Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json")
-        json_path = nxt
-        from_queue = True
-        print("Queue:", json_path)
+    from_queue = bool(args.queue or json_path is None)
+    cfg = load_config()
+    stale = float(cfg.queue.get("stale_lock_seconds", DEFAULT_STALE_LOCK_SECONDS))
 
-    try:
-        publish_one(
-            json_path,
-            Path(args.footage) if args.footage else None,
-            Path(args.music) if args.music else None,
-            Path(args.voice) if args.voice else None,
-            args.state,
-            args.skip_upload,
-            args.force,
-        )
-    except (SystemExit, Exception) as exc:
-        # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
-        # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
+    # Khoá trước khi đọc pending: hai cron chạy chồng sẽ lấy trùng 1 clip.
+    with queue_lock(stale) if from_queue else nullcontext():
         if from_queue:
-            dest = queue_fail(json_path, describe_error(exc))
-            print(f"→ lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
-        raise
-    if from_queue:
-        dest = queue_move(json_path, "done")
-        print(f"→ moved to {dest}")
+            json_path = next_pending()
+            if json_path is None:
+                raise SystemExit(
+                    "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
+                )
+            log(f"queue: {json_path}")
+
+        try:
+            publish_one(
+                json_path,
+                Path(args.footage) if args.footage else None,
+                Path(args.music) if args.music else None,
+                Path(args.voice) if args.voice else None,
+                args.state,
+                args.skip_upload,
+                args.force,
+            )
+        except (SystemExit, Exception) as exc:
+            # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
+            # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
+            if from_queue:
+                dest = queue_fail(json_path, describe_error(exc))
+                log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
+            raise
+        if from_queue:
+            dest = queue_move(json_path, "done")
+            log(f"moved to {dest}")
 
 
 if __name__ == "__main__":
