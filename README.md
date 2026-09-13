@@ -123,8 +123,13 @@ Mỗi dòng là `[ok]` / `[warn]` / `[fail]`; exit code 1 khi có `[fail]`.
 ```bash
 python3 src/jobqueue.py add data/samples/clip_001.json
 python3 src/jobqueue.py list
-python3 src/publish.py --queue
+python3 src/publish.py --queue                 # 1 clip mỗi lần chạy
+python3 src/publish.py --queue --max 3         # tối đa 3 clip
+python3 src/publish.py --queue --max 0         # dọn hết hàng chờ
 ```
+
+Batch dừng sớm nếu **2 clip liên tiếp lỗi cùng một lỗi** (thường là token hỏng) để không đốt cả hàng
+chờ vào cùng một nguyên nhân; mọi clip lỗi vẫn được đưa sang `failed/` + gửi cảnh báo.
 
 Clip xong → `data/queue/done/`. Lỗi → `data/queue/failed/`.
 Log đăng: `data/published.json` (chống đăng trùng; hạn mức 30 Reels/24h chỉ tính bài `PUBLISHED`,
@@ -198,6 +203,10 @@ python3 src/topics.py next    # in chủ đề nên làm tiếp (ít dùng nhấ
 Danh sách chủ đề nằm trong `config.yaml` (`content.topics`). `publish.py` ghi `topic` của clip vào
 `data/published.json`, nên vòng xoay tự tính — không cần đánh dấu tay.
 
+Thứ tự chọn: **ít dùng nhất → điểm insights cao nhất → lâu nhất**. Nghĩa là vẫn phủ đều mọi chủ đề,
+nhưng khi hai chủ đề ngang số lần thì chủ đề đang hiệu quả hơn được làm trước (điểm lấy từ
+`src/insights.py refresh`). Chạy `python3 src/topics.py list` để xem số lần + điểm từng chủ đề.
+
 Trước khi đăng, nội dung được so với các bài đã publish (bỏ dấu, chữ thường, so theo Jaccard):
 bài trùng khít hoặc giống từ `content.duplicate_similarity` (mặc định 85%) sẽ bị chặn kèm gợi ý
 `--force`. Đặt ngưỡng 0 để tắt.
@@ -251,6 +260,11 @@ python3 src/publish.py --json data/samples/clip_001.json --crosspost youtube,tik
 
 Bật mặc định bằng `crosspost.targets: [youtube, tiktok]` trong `config.yaml`; `--crosspost none` để tắt
 cho một lần chạy. Lỗi ở một nền tảng chỉ được ghi lại, không làm hỏng bước đăng Facebook.
+Đã cross-post rồi thì lần sau tự bỏ qua (thêm `--force` để đăng lại).
+
+**Caption/hashtag riêng theo nền tảng**: `youtube_caption` và `tiktok_caption` trong JSON clip (nếu có)
+được dùng thay cho caption Facebook; hashtag thêm bằng `crosspost.youtube_tags` / `crosspost.tiktok_tags`
+(không thêm trùng). TikTok đặt hashtag ngay trong caption và cắt theo giới hạn 2200 ký tự.
 
 - **YouTube**: cần OAuth client (scope `youtube.upload`) + `YOUTUBE_REFRESH_TOKEN`; video được đẩy
   bằng resumable upload, tiêu đề tự thêm `#Shorts`, ảnh cover đặt qua `thumbnails.set`.
@@ -283,8 +297,10 @@ docker compose exec reels python3 src/doctor.py --online
 ```
 
 Container cài sẵn FFmpeg, chạy `doctor.py` lúc khởi động (đặt `DOCTOR_STRICT=1` để dừng nếu có `[fail]`)
-rồi vào lịch bằng `src/scheduler.py` — không cần cron của host. Đổi giờ bằng `SCHEDULE_HOUR`/
-`SCHEDULE_MINUTE` (UTC). `assets/`, `data/`, `logs/` được mount từ host nên build lại image không mất dữ liệu.
+rồi vào lịch bằng `src/scheduler.py` — không cần cron của host. Giờ chạy hiểu theo `SCHEDULE_TZ`
+(mặc định `Asia/Ho_Chi_Minh`, tên IANA), đổi bằng `SCHEDULE_HOUR`/`SCHEDULE_MINUTE`, và
+`SCHEDULE_COMMAND` để đổi việc (ví dụ `--max 3`). `assets/`, `data/`, `logs/` được mount từ host nên
+build lại image không mất dữ liệu.
 
 Lịch khác (ví dụ dọn file mỗi tuần) thì đổi `SCHEDULE_COMMAND`:
 
@@ -332,6 +348,8 @@ ruff check src tests
 | Cross-post lỗi nhưng Reel đã lên | Đúng thiết kế: lỗi từng nền tảng chỉ được ghi lại. Xem dòng `crosspost <nền tảng>: LỖI ...` hoặc `doctor.py` để biết thiếu credential nào. |
 | YouTube trả `308` | File quá lớn cho upload 1 request (giới hạn ~64MB) — Shorts thường không gặp. |
 | TikTok chỉ đăng ở chế độ riêng tư | App chưa được TikTok duyệt; đặt `TIKTOK_PRIVACY_LEVEL` cao hơn sẽ bị từ chối. |
+| Lịch chạy sai giờ | Giờ hiểu theo `SCHEDULE_TZ`/`schedule.timezone` (mặc định `Asia/Ho_Chi_Minh`), không phải UTC — đổi tz hoặc giờ cho khớp. |
+| Batch dừng giữa đường | Hai clip lỗi cùng một lỗi thì batch dừng (tránh đốt cả hàng chờ); xem `data/queue/failed/*/_queue.last_error`. |
 | Container không chạy lịch | Xem `docker compose logs`; lịch tính theo **giờ UTC** (`SCHEDULE_HOUR`), và `DOCTOR_STRICT=1` sẽ chặn container khi thiếu token. |
 | Muốn xoá file cũ cho nhẹ máy | `python3 src/cleanup.py` xem trước, `--apply` mới xoá; file của clip đang trong queue luôn được giữ. |
 
