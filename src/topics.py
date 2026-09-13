@@ -60,8 +60,27 @@ def topic_usage() -> dict[str, dict[str, object]]:
     return usage
 
 
+def topic_scores(cfg: Cfg | None = None) -> dict[str, float]:
+    """Điểm hiệu quả trung bình theo chủ đề từ `data/insights.json`.
+
+    Đọc insights ở đây (import muộn) để `topics.py` vẫn dùng được khi thiếu `requests`.
+
+    @param cfg config, mặc định đọc config.yaml
+    @returns {chủ đề: điểm}; rỗng khi chưa có dữ liệu insights
+    """
+    try:
+        from insights import topic_scores as scores
+
+        return scores()
+    except (SystemExit, Exception):
+        return {}
+
+
 def next_topic(cfg: Cfg | None = None) -> str | None:
-    """Chủ đề nên làm tiếp: chưa dùng bao giờ, hoặc dùng ít nhất và lâu nhất.
+    """Chủ đề nên làm tiếp: dùng ít nhất và lâu nhất, cùng hạng thì chọn điểm cao hơn.
+
+    Vòng xoay vẫn đảm bảo phủ đều (số lần dùng là tiêu chí đầu); điểm insights chỉ
+    phá hoà giữa các chủ đề ngang số lần, để chủ đề hiệu quả hơn được làm trước.
 
     @param cfg config, mặc định đọc config.yaml
     @returns tên chủ đề, None nếu config không có chủ đề nào
@@ -70,27 +89,35 @@ def next_topic(cfg: Cfg | None = None) -> str | None:
     if not topics:
         return None
     usage = topic_usage()
+    scores = topic_scores(cfg)
     return min(
         topics,
         key=lambda topic: (
             int(usage.get(topic, {}).get("count", 0)),
+            -float(scores.get(topic, 0.0)),
             float(usage.get(topic, {}).get("last_ts", 0.0)),
         ),
     )
 
 
-def rotation_report(cfg: Cfg | None = None) -> list[tuple[str, int, str]]:
+def rotation_report(cfg: Cfg | None = None) -> list[tuple[str, int, str, float]]:
     """Bảng xoay vòng để in ra hoặc cho doctor đọc.
 
     @param cfg config, mặc định đọc config.yaml
-    @returns [(chủ đề, số lần đăng, lần cuối ISO)] theo thứ tự đã khai báo
+    @returns [(chủ đề, số lần đăng, lần cuối ISO, điểm insights)] theo thứ tự đã khai báo
     """
     usage = topic_usage()
+    scores = topic_scores(cfg)
     report = []
     for topic in configured_topics(cfg):
         entry = usage.get(topic, {})
         report.append(
-            (topic, int(entry.get("count", 0)), str(entry.get("last_iso", "")) or "chưa đăng")
+            (
+                topic,
+                int(entry.get("count", 0)),
+                str(entry.get("last_iso", "")) or "chưa đăng",
+                float(scores.get(topic, 0.0)),
+            )
         )
     return report
 
@@ -106,8 +133,8 @@ def main() -> None:
             raise SystemExit("config.yaml chưa khai báo content.topics")
         print(topic)
         return
-    for topic, count, last in rotation_report():
-        log(f"{count:>2} lần | {last:<20} | {topic}")
+    for topic, count, last, score in rotation_report():
+        log(f"{count:>2} lần | {last:<20} | điểm {score:>8.0f} | {topic}")
 
 
 if __name__ == "__main__":

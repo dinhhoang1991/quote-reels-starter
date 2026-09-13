@@ -370,14 +370,11 @@ def post_first_comment(
 
 
 def caption_from_json(data: dict, extra_tags: str) -> str:
-    caption = (data.get("caption") or "").strip()
-    if not caption:
-        from schema import default_caption
+    """Caption Facebook: `caption` trong JSON, thiếu thì sinh từ nội dung, rồi ghép hashtag."""
+    from schema import compose_caption, default_caption
 
-        caption = default_caption(data)
-    if extra_tags and extra_tags not in caption:
-        caption = caption.rstrip() + "\n\n" + extra_tags
-    return caption
+    caption = (data.get("caption") or "").strip() or default_caption(data)
+    return compose_caption(caption, extra_tags)
 
 
 def upload_reel(

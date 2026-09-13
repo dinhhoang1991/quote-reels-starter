@@ -203,6 +203,29 @@ def metric_value(values: Any) -> float:
     return 0.0
 
 
+def topic_scores(data: dict[str, Any] | None = None) -> dict[str, float]:
+    """Điểm hiệu quả trung bình theo chủ đề, đọc từ data/insights.json.
+
+    Chỉ tính video có metric chính (metric đầu trong `insights.metrics`); video chưa đo
+    được metric đó bị bỏ qua thay vì tính là 0.
+
+    @param data nội dung insights, mặc định đọc file
+    @returns {chủ đề: điểm trung bình}; chủ đề không có dữ liệu thì không xuất hiện
+    """
+    data = data if data is not None else load_insights()
+    key = configured_metrics()[0]
+    totals: dict[str, list[float]] = {}
+    for item in (data.get("videos") or {}).values():
+        topic = str(item.get("topic") or "").strip()
+        metrics = item.get("metrics") or {}
+        if not topic or key not in metrics:
+            continue
+        totals.setdefault(topic, []).append(metric_value(metrics[key]))
+    return {
+        topic: sum(values) / len(values) for topic, values in totals.items() if values
+    }
+
+
 def summary(data: dict[str, Any] | None = None, top: int = 5) -> list[str]:
     """Tóm tắt hiệu quả để chọn chủ đề tiếp theo.
 

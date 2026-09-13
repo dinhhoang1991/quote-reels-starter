@@ -42,17 +42,30 @@ class SettingsTest(unittest.TestCase):
         return Cfg({"schedule": schedule} if schedule else {})
 
     def test_lay_tu_config(self):
-        self.assertEqual(scheduler.schedule_settings(self.cfg(hour=6, minute=30, command="x")),
-                         (6, 30, "x"))
+        self.assertEqual(
+            scheduler.schedule_settings(
+                self.cfg(hour=6, minute=30, command="x", timezone="Asia/Ho_Chi_Minh")
+            ),
+            (6, 30, "x", "Asia/Ho_Chi_Minh"),
+        )
 
     def test_mac_dinh_khi_thieu_config(self):
-        self.assertEqual(scheduler.schedule_settings(self.cfg()), (7, 0, "python3 src/publish.py --queue"))
+        self.assertEqual(
+            scheduler.schedule_settings(self.cfg()),
+            (7, 0, "python3 src/publish.py --queue", "UTC"),
+        )
 
     def test_env_ghi_de_config(self):
-        cfg = self.cfg(hour=6, minute=30, command="config")
+        cfg = self.cfg(hour=6, minute=30, command="config", timezone="UTC")
         with mock.patch.dict("os.environ", {"SCHEDULE_HOUR": "21", "SCHEDULE_MINUTE": "15",
-                                            "SCHEDULE_COMMAND": "env"}):
-            self.assertEqual(scheduler.schedule_settings(cfg), (21, 15, "env"))
+                                            "SCHEDULE_COMMAND": "env",
+                                            "SCHEDULE_TZ": "Asia/Ho_Chi_Minh"}):
+            self.assertEqual(scheduler.schedule_settings(cfg), (21, 15, "env", "Asia/Ho_Chi_Minh"))
+
+    def test_timezone_sai_thi_bao_loi_ro(self):
+        with self.assertRaises(SystemExit) as ctx:
+            scheduler.schedule_settings(self.cfg(timezone="Sai/Vung"))
+        self.assertIn("Asia/Ho_Chi_Minh", str(ctx.exception))
 
     def test_gio_khong_hop_le_thi_bao_loi(self):
         with self.assertRaises(SystemExit):
@@ -72,7 +85,45 @@ class SettingsTest(unittest.TestCase):
     def test_env_rong_thi_dung_config(self):
         cfg = self.cfg(hour=6, minute=15)
         with mock.patch.dict("os.environ", {"SCHEDULE_HOUR": "  ", "SCHEDULE_MINUTE": ""}):
-            self.assertEqual(scheduler.schedule_settings(cfg), (6, 15, "python3 src/publish.py --queue"))
+            self.assertEqual(
+                scheduler.schedule_settings(cfg),
+                (6, 15, "python3 src/publish.py --queue", "UTC"),
+            )
+
+
+class TimezoneTest(unittest.TestCase):
+    def test_gio_vn_khac_utc_7_tieng(self):
+        now = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)   # 07:00 giờ VN
+        # đúng mốc 07:00 VN → lần kế tiếp là ngày mai
+        self.assertAlmostEqual(
+            scheduler.seconds_until(7, 0, now, "Asia/Ho_Chi_Minh"), 24 * 3600
+        )
+        # 12:00 VN còn 5 tiếng, trong khi 12:00 UTC còn 12 tiếng
+        self.assertAlmostEqual(
+            scheduler.seconds_until(12, 0, now, "Asia/Ho_Chi_Minh"), 5 * 3600
+        )
+        self.assertAlmostEqual(scheduler.seconds_until(12, 0, now, "UTC"), 12 * 3600)
+
+    def test_mac_dinh_la_utc(self):
+        now = datetime(2026, 9, 13, 6, 0, tzinfo=timezone.utc)
+        self.assertAlmostEqual(scheduler.seconds_until(7, 0, now), 3600)
+
+    def test_timezone_sai_thi_bao_loi(self):
+        with self.assertRaises(SystemExit):
+            scheduler.seconds_until(7, 0, datetime(2026, 9, 13, tzinfo=timezone.utc), "Khong/Co")
+
+    def test_run_daily_truyen_timezone(self):
+        # 20:00 UTC = 03:00 giờ VN → còn 4 tiếng tới 07:00 VN
+        now = datetime(2026, 9, 12, 20, 0, tzinfo=timezone.utc)
+        sleeps: list[float] = []
+        with mock.patch.object(scheduler, "log") as log:
+            scheduler.run_daily(
+                "python3 -c pass", 7, 0, sleep=sleeps.append, now_fn=lambda: now,
+                run=lambda argv, check=False: mock.Mock(returncode=0), max_runs=1,
+                timezone_name="Asia/Ho_Chi_Minh",
+            )
+        self.assertAlmostEqual(sleeps[0], 4 * 3600)
+        self.assertTrue(any("Asia/Ho_Chi_Minh" in str(call) for call in log.call_args_list))
 
 
 class RunDailyTest(unittest.TestCase):

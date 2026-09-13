@@ -23,7 +23,7 @@ from pathlib import Path
 
 from config import load_config, root
 from logutil import already_crossposted, crosspost_state, log, record_publish
-from schema import load_clip
+from schema import compose_caption, load_clip
 from upload_facebook import api_error, request_file_with_retry, request_with_retry
 
 ROOT = root()
@@ -249,11 +249,17 @@ def upload_clip(
     """
     cfg = load_config()
     data = data or {}
+    section = cfg.get("crosspost", {}) or {}
+    platform_tags = str(section.get("youtube_tags", "") or "")
     title = shorts_title(str(data.get("title") or video.stem))
-    description = shorts_description(caption or str(data.get("caption") or ""), tags)
+    # Ưu tiên `youtube_caption` trong JSON, rồi caption chung; hashtag chung + hashtag YouTube.
+    base_caption = str(data.get("youtube_caption") or caption or data.get("caption") or "")
+    description = shorts_description(
+        compose_caption(base_caption, platform_tags), compose_caption(tags, platform_tags)
+    )
     metadata = video_metadata(
-        title, description, parse_tags(tags),
-        category_id=str((cfg.get("crosspost", {}) or {}).get("youtube_category_id", DEFAULT_CATEGORY)),
+        title, description, parse_tags(compose_caption(tags, platform_tags)).copy(),
+        category_id=str(section.get("youtube_category_id", DEFAULT_CATEGORY)),
         privacy_status=privacy,
     )
     if dry_run:

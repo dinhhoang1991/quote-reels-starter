@@ -320,11 +320,12 @@ def check_content(cfg: Cfg) -> list[Check]:
         checks.append(Check(WARN, "chủ đề", "content.topics trống — xoay vòng thủ công"))
     else:
         report = rotation_report(cfg)
-        unused = sum(1 for _, count, _ in report if count == 0)
-        checks.append(
-            Check(OK, "chủ đề",
-                  f"{len(topics)} chủ đề, {unused} chưa dùng, tiếp theo: {next_topic(cfg)}")
-        )
+        unused = sum(1 for _, count, _, _ in report if count == 0)
+        scored = [score for _, _, _, score in report if score > 0]
+        detail = f"{len(topics)} chủ đề, {unused} chưa dùng, tiếp theo: {next_topic(cfg)}"
+        if scored:
+            detail += f" (insights: {len(scored)} chủ đề có điểm)"
+        checks.append(Check(OK, "chủ đề", detail))
 
     data = load_insights()
     videos = data.get("videos") or {}
@@ -374,9 +375,17 @@ def check_integrations(cfg: Cfg) -> list[Check]:
     hour = int(schedule.get("hour", 7))
     minute = int(schedule.get("minute", 0))
     valid = 0 <= hour <= 23 and 0 <= minute <= 59
+    tz_name = str(schedule.get("timezone", "UTC"))
+    try:
+        from scheduler import timezone_of
+
+        timezone_of(tz_name)
+        tz_ok = True
+    except SystemExit:
+        tz_ok = False
     checks.append(
-        Check(OK if valid else FAIL, "schedule",
-              f"{hour:02d}:{minute:02d} UTC — {schedule.get('command', 'publish.py --queue')}")
+        Check(OK if (valid and tz_ok) else FAIL, "schedule",
+              f"{hour:02d}:{minute:02d} {tz_name} — {schedule.get('command', 'publish.py --queue')}")
     )
     from notify import load_notify_env
 

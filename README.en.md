@@ -78,7 +78,9 @@ python3 src/insights.py summary   # top clips + average per topic
 ```
 
 The rotation list lives in `config.yaml` (`content.topics`); `publish.py` records each clip's
-`topic`, so rotation needs no bookkeeping. Before publishing, content is compared with earlier
+`topic`, so rotation needs no bookkeeping. Selection order is least used -> highest insights score ->
+longest idle, i.e. every topic still gets covered while ties go to the topic that performs better
+(scores come from `python3 src/insights.py refresh`). Before publishing, content is compared with earlier
 posts (diacritics stripped, Jaccard similarity) and blocked above `content.duplicate_similarity`
 (default 0.85) unless `--force` is passed.
 
@@ -89,6 +91,8 @@ posts (diacritics stripped, Jaccard similarity) and blocked above `content.dupli
   a failed comment is recorded but does not fail the publish.
 - Cover: a frame from the hook is extracted to `assets/overlays/<id>_cover.jpg` and used as the
   YouTube thumbnail; `facebook.thumb_offset_ms` passes a cover timestamp to the Reels API.
+- Per-platform copy: `youtube_caption` / `tiktok_caption` in the clip JSON override the shared
+  caption, and `crosspost.youtube_tags` / `crosspost.tiktok_tags` are appended without duplication.
 - Cross-post: `python3 src/publish.py --json ... --crosspost youtube,tiktok` (or set
   `crosspost.targets` in config). Both uploaders support `--dry-run` and are documented in
   `src/upload_youtube.py` / `src/upload_tiktok.py`; they have **not** been run against the real
@@ -115,8 +119,10 @@ docker compose exec reels python3 src/doctor.py --online
 
 The image ships FFmpeg and runs `doctor.py` on start (`DOCTOR_STRICT=1` stops on `[fail]`), then
 schedules itself with `src/scheduler.py` — no host cron needed. `assets/`, `data/` and `logs/` are
-mounted from the host. Schedule is UTC (`SCHEDULE_HOUR`/`SCHEDULE_MINUTE`), the command is
-`SCHEDULE_COMMAND`.
+mounted from the host. Hours are read in `SCHEDULE_TZ` (IANA name, default `Asia/Ho_Chi_Minh`);
+`SCHEDULE_HOUR`/`SCHEDULE_MINUTE` pick the time and `SCHEDULE_COMMAND` the work (for example
+`--max 3` to publish three clips per run). `publish.py --queue --max N` also stops the batch after two
+consecutive identical failures, so a dead token cannot burn the whole queue.
 
 ## Cleanup
 
