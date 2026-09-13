@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""Validate list JSON before render / upload."""
+"""Validate list JSON before render / upload, and fingerprint its content."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
-
 
 REQUIRED = ("id", "title", "items")
 ITEM_REQUIRED = ("label", "text")
 ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+
+# Luật biên tập trong prompts/generate_list.md. Vượt thì cảnh báo, không chặn render.
+CONTENT_LIMITS = {
+    "title_words": 8,
+    "title_lines": 2,
+    "label_words": 6,
+    "text_words": 8,
+    "min_items": 8,
+    "max_items": 10,
+}
+NON_WORD_RE = re.compile(r"[^a-z0-9 ]+")
 
 
 class ClipError(ValueError):
@@ -64,6 +76,109 @@ def validate_clip(data: Any, source: str = "clip") -> dict[str, Any]:
     if not data["caption"]:
         data["caption"] = default_caption(data)
     return data
+
+
+def content_warnings(data: dict[str, Any]) -> list[str]:
+    """Cảnh báo nội dung vượt luật biên tập — render vẫn chạy, chỉ nhắc người viết.
+
+    @param data clip đã qua validate_clip
+    @returns danh sách cảnh báo dạng người đọc được, rỗng nếu nội dung đúng luật
+    """
+    warnings: list[str] = []
+    title_lines = [line for line in str(data.get("title", "")).split("\n") if line.strip()]
+    title_words = len(" ".join(title_lines).split())
+    if len(title_lines) > CONTENT_LIMITS["title_lines"]:
+        warnings.append(
+            f"title có {len(title_lines)} dòng, khuyến nghị tối đa "
+            f"{CONTENT_LIMITS['title_lines']}"
+        )
+    if title_words > CONTENT_LIMITS["title_words"]:
+        warnings.append(
+            f"title có {title_words} chữ, khuyến nghị tối đa {CONTENT_LIMITS['title_words']}"
+        )
+    items = data.get("items") or []
+    if len(items) < CONTENT_LIMITS["min_items"]:
+        warnings.append(
+            f"chỉ có {len(items)} items, khuyến nghị {CONTENT_LIMITS['min_items']}–"
+            f"{CONTENT_LIMITS['max_items']}"
+        )
+    if len(items) > CONTENT_LIMITS["max_items"]:
+        warnings.append(
+            f"có {len(items)} items, khuyến nghị tối đa {CONTENT_LIMITS['max_items']}"
+        )
+    long_labels: list[int] = []
+    long_texts: list[int] = []
+    for idx, item in enumerate(items, start=1):
+        if len(str(item.get("label", "")).split()) > CONTENT_LIMITS["label_words"]:
+            long_labels.append(idx)
+        if len(str(item.get("text", "")).split()) > CONTENT_LIMITS["text_words"]:
+            long_texts.append(idx)
+    if long_labels:
+        warnings.append(
+            f"{len(long_labels)} item có label quá {CONTENT_LIMITS['label_words']} chữ "
+            f"({_item_list(long_labels)})"
+        )
+    if long_texts:
+        warnings.append(
+            f"{len(long_texts)} item có text quá {CONTENT_LIMITS['text_words']} chữ "
+            f"({_item_list(long_texts)})"
+        )
+    return warnings
+
+
+def _item_list(indexes: list[int], limit: int = 5) -> str:
+    """Gọn danh sách số thứ tự item cho cảnh báo: '1, 2, 3 … (+4)'."""
+    shown = ", ".join(str(i) for i in indexes[:limit])
+    hidden = len(indexes) - limit
+    return f"item {shown} … (+{hidden})" if hidden > 0 else f"item {shown}"
+
+
+def normalize_text(text: str) -> str:
+    """Chữ thường, bỏ dấu tiếng Việt, bỏ ký tự lạ — dùng để so trùng nội dung.
+
+    @param text chuỗi bất kỳ
+    @returns chuỗi đã chuẩn hoá, khoảng trắng gộp còn 1
+    """
+    decomposed = unicodedata.normalize("NFD", str(text).lower().replace("đ", "d"))
+    without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(NON_WORD_RE.sub(" ", without_marks).split())
+
+
+def content_tokens(data: dict[str, Any]) -> list[str]:
+    """Các đơn vị nội dung để so trùng: tiêu đề + từng label + từng text.
+
+    @param data clip đã validate
+    @returns danh sách chuỗi đã chuẩn hoá, bỏ phần rỗng
+    """
+    parts = [normalize_text(data.get("title", ""))]
+    for item in data.get("items") or []:
+        parts.append(normalize_text(item.get("label", "")))
+        parts.append(normalize_text(item.get("text", "")))
+    return [part for part in parts if part]
+
+
+def content_similarity(left: list[str], right: list[str]) -> float:
+    """Tỉ lệ trùng nội dung theo Jaccard trên tập token.
+
+    @param left token của clip A
+    @param right token của clip B
+    @returns 0.0–1.0; 1.0 khi hai tập giống nhau, 0.0 khi rời nhau hoặc rỗng
+    """
+    first, second = set(left), set(right)
+    if not first or not second:
+        return 0.0
+    return len(first & second) / len(first | second)
+
+
+def content_signature(data: dict[str, Any]) -> dict[str, Any]:
+    """Chữ ký nội dung lưu vào published log để chặn đăng trùng về sau.
+
+    @param data clip đã validate
+    @returns {"fingerprint": sha256 16 ký tự, "tokens": [...]}
+    """
+    tokens = content_tokens(data)
+    digest = hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()[:16]
+    return {"fingerprint": digest, "tokens": tokens}
 
 
 def default_voice_script(data: dict[str, Any]) -> str:

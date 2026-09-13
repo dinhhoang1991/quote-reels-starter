@@ -29,7 +29,8 @@ Quy tắc:
 - caption bắt buộc: ngắn, có hook, kết bằng câu hỏi để người xem comment.
 - Chủ đề lần này: {{CHU_DE}}
 
-Gợi ý chủ đề xoay vòng:
+Gợi ý chủ đề xoay vòng (nguồn chuẩn: `content.topics` trong `config.yaml`; chạy
+`python3 src/topics.py next` để biết chủ đề nên làm tiếp):
 1. Phân loại tài sản theo thu nhập mỗi tháng
 2. Cách sống đẳng cấp sau tuổi 30
 3. Cách gia tăng tài sản theo số vốn
@@ -38,3 +39,6 @@ Gợi ý chủ đề xoay vòng:
 6. Thói quen người giàu làm mỗi sáng
 7. Sai lầm tài chính trước tuổi 35
 8. Dấu hiệu bạn đang dừng ở tầng trung lưu
+
+Điền `topic` trong JSON đúng tên chủ đề đã chọn — `publish.py` ghi lại để xoay vòng và
+chống đăng trùng nội dung.

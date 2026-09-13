@@ -1,4 +1,6 @@
-pillow>=10.0.0
-edge-tts>=7.0.0
-pyyaml>=6.0.0
-requests>=2.31.0
+# Pin theo bản đã chạy test (xem .github/workflows/ci.yml). Nâng có ý thức rồi chạy lại test.
+# `pyproject.toml` khai báo cùng danh sách; tests/test_packaging.py kiểm tra hai bên khớp nhau.
+pillow==12.3.0
+edge-tts==7.2.8
+pyyaml==6.0.3
+requests==2.34.2

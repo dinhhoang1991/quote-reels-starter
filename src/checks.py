@@ -64,6 +64,33 @@ def clamp_duration(seconds: float) -> float:
     return seconds
 
 
+def parse_rate_percent(rate: str) -> float:
+    """Đổi rate của edge-tts thành số phần trăm: '-8%' -> -8.0, giá trị lạ -> 0.0."""
+    try:
+        return float(str(rate).strip().rstrip("%"))
+    except ValueError:
+        return 0.0
+
+
+def estimate_voice_seconds(text: str, rate: str, chars_per_second: float) -> float:
+    """Ước lượng thời lượng đọc từ số ký tự, trước khi gọi TTS.
+
+    Heuristic để bắt sớm script quá dài; sai số ~±15% nên chỉ dùng cho cảnh báo,
+    không dùng để cắt audio.
+
+    @param text voice_script
+    @param rate rate của edge-tts, ví dụ '-8%'
+    @param chars_per_second số ký tự đọc được mỗi giây ở rate 0%
+    @returns số giây ước lượng, 0.0 nếu tham số không dùng được
+    """
+    chars = len(" ".join(str(text).split()))
+    speed = 1.0 + parse_rate_percent(rate) / 100.0
+    if chars_per_second <= 0 or speed <= 0:
+        return 0.0
+    return chars / (chars_per_second * speed)
+
+
+
 def fonts_ok() -> None:
     cfg = load_config()
     fonts_dir = resolve_path(cfg.paths.fonts_dir)
