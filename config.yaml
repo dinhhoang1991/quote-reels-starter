@@ -106,6 +106,14 @@ crosspost:
   youtube_privacy: public
   tiktok_privacy: SELF_ONLY
 
+notify:
+  # Cảnh báo khi pipeline lỗi. Khai báo kênh trong .env:
+  # TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, hoặc NOTIFY_WEBHOOK_URL.
+  enabled: true
+  min_level: warn        # info | warn | error — mức tối thiểu để gửi
+  on_success: false      # true = gửi cả khi đăng thành công (dễ ồn)
+  on_empty_queue: true   # true = cảnh báo khi --queue không còn clip nào
+
 schedule:
   # Dùng cho `src/scheduler.py` (container/Docker). Giờ UTC; cron của host thì dùng
   # scripts/cron.example. Biến môi trường SCHEDULE_HOUR/MINUTE/COMMAND ghi đè config này.

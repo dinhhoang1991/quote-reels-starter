@@ -15,6 +15,7 @@ from jobqueue import move as queue_move
 from jobqueue import next_pending, queue_lock
 from logutil import log, remaining_quota
 from make_video import build
+from notify import notify_empty_queue, notify_publish_failure, notify_publish_success
 from schema import load_clip
 from upload_facebook import caption_from_json, load_env, upload_reel
 
@@ -178,6 +179,8 @@ def publish_one(
     log(f"reel: {result.get('reel_url')}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
+    notify_publish_success(data["id"], str(result.get("reel_url", "")))
+
     if crosspost_targets and state.upper() == "PUBLISHED":
         cover = make_clip_cover(video, data)
         log(f"5) crosspost: {', '.join(crosspost_targets)}"
@@ -213,6 +216,7 @@ def main() -> None:
         if from_queue:
             json_path = next_pending()
             if json_path is None:
+                notify_empty_queue()
                 raise SystemExit(
                     "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
                 )
@@ -236,6 +240,7 @@ def main() -> None:
             if from_queue:
                 dest = queue_fail(json_path, describe_error(exc))
                 log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
+            notify_publish_failure(json_path.stem, describe_error(exc))
             raise
         if from_queue:
             dest = queue_move(json_path, "done")

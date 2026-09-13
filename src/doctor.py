@@ -378,6 +378,20 @@ def check_integrations(cfg: Cfg) -> list[Check]:
         Check(OK if valid else FAIL, "schedule",
               f"{hour:02d}:{minute:02d} UTC — {schedule.get('command', 'publish.py --queue')}")
     )
+    from notify import load_notify_env
+
+    settings = load_notify_env(cfg)
+    channels = [
+        name for name, on in (
+            ("telegram", bool(settings["telegram_token"] and settings["telegram_chat_id"])),
+            ("webhook", bool(settings["webhook"])),
+        ) if on
+    ]
+    checks.append(
+        Check(OK if channels else WARN, "cảnh báo",
+              ", ".join(channels) + f" (mức tối thiểu {settings['min_level']})"
+              if channels else "chưa cấu hình — lỗi publish sẽ im lặng")
+    )
     keep_days = float((cfg.get("cleanup", {}) or {}).get("keep_days", 30))
     checks.append(
         Check(OK if keep_days > 0 else WARN, "cleanup",
@@ -432,6 +446,10 @@ def check_token(cfg: Cfg, online: bool) -> list[Check]:
                   f"còn {days:.1f} ngày" + ("" if days > TOKEN_WARN_DAYS
                                             else " — chạy fbtoken.py để gia hạn"))
         )
+        if days <= TOKEN_WARN_DAYS:
+            from notify import notify_token_expiring
+
+            notify_token_expiring(days)
     else:
         checks.append(Check(OK, "FB token hạn", "không hết hạn (System User token)"))
 
