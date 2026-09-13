@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 
 from config import load_config, root
-from logutil import log
+from logutil import already_crossposted, crosspost_state, log, record_publish
 from schema import load_clip
 from upload_facebook import api_error, request_file_with_retry, request_with_retry
 
@@ -231,6 +231,8 @@ def upload_clip(
     cover: Path | None = None,
     privacy: str = "public",
     dry_run: bool = False,
+    clip_id: str = "",
+    force: bool = False,
 ) -> dict:
     """Đăng clip lên YouTube dưới dạng Shorts.
 
@@ -241,6 +243,8 @@ def upload_clip(
     @param cover ảnh cover, None thì bỏ qua
     @param privacy public | unlisted | private
     @param dry_run chỉ in request, không gọi mạng
+    @param clip_id id clip để chống đăng trùng, rỗng thì bỏ qua log
+    @param force đăng lại dù đã có trong log
     @returns dict kết quả (có video_id/url, hoặc request khi dry_run)
     """
     cfg = load_config()
@@ -262,6 +266,17 @@ def upload_clip(
             "video_bytes": video.stat().st_size if video.exists() else 0,
             "cover": str(cover) if cover else "",
         }
+    if clip_id and not force:
+        previous = already_crossposted(clip_id, "youtube")
+        if previous:
+            log(f"YouTube: {clip_id} đã đăng lúc {previous.get('iso')} — bỏ qua "
+                f"(dùng --force nếu muốn đăng lại)")
+            return {
+                "target": "youtube",
+                "skipped": True,
+                "reason": "đã cross-post trước đó",
+                "url": str(previous.get("url", "")),
+            }
     env = load_youtube_env()
     retries = int(cfg.facebook.max_retries)
     token = access_token(env["client_id"], env["client_secret"], env["refresh_token"], retries)
@@ -282,6 +297,10 @@ def upload_clip(
         except (SystemExit, Exception) as exc:
             result["thumbnail_error"] = str(exc)
             log(f"cảnh báo: không đặt được thumbnail YouTube ({exc})")
+    if clip_id:
+        record_publish(
+            clip_id, video_id, crosspost_state("youtube"), str(result["url"]), {"target": "youtube"}
+        )
     return result
 
 
@@ -296,6 +315,7 @@ def main() -> None:
     parser.add_argument("--privacy", default=str((cfg.get("crosspost", {}) or {}).get(
         "youtube_privacy", "public")))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Đăng lại dù đã có trong log")
     parser.add_argument("--help-auth", action="store_true", help="In biến môi trường cần có")
     args = parser.parse_args()
 
@@ -313,6 +333,7 @@ def main() -> None:
         video, data, caption=args.caption, tags=args.tags,
         cover=Path(args.cover) if args.cover else None,
         privacy=args.privacy, dry_run=args.dry_run,
+        clip_id=str(data.get("id", "")), force=args.force,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

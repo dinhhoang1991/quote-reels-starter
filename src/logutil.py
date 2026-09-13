@@ -53,6 +53,25 @@ def already_published(clip_id: str) -> dict[str, Any] | None:
     return None
 
 
+def crosspost_state(target: str) -> str:
+    """Trạng thái log cho một lần cross-post: `CROSSPOST_YOUTUBE`."""
+    return f"CROSSPOST_{str(target).upper()}"
+
+
+def already_crossposted(clip_id: str, target: str) -> dict[str, Any] | None:
+    """Lần cross-post trước đó của clip lên nền tảng này, nếu có.
+
+    @param clip_id id clip
+    @param target 'youtube' | 'tiktok'
+    @returns entry trong published log hoặc None
+    """
+    state = crosspost_state(target)
+    for post in load_log().get("posts", []):
+        if post.get("clip_id") == clip_id and str(post.get("state", "")).upper() == state:
+            return post
+    return None
+
+
 def posts_last_24h(states: tuple[str, ...] = (PUBLISHED_STATE,)) -> list[dict[str, Any]]:
     """Các lần đăng trong 24h qua. Mặc định chỉ tính bài đã publish thật.
 

@@ -343,21 +343,29 @@ class PublishCrosspostTest(unittest.TestCase):
         })
         self.data = validate_clip(dict(CLIP))
 
-    def test_crosspost_goi_dung_ham_va_ghi_log(self):
-        recorded = []
+    def test_crosspost_truyen_clip_id_va_force(self):
         with (
             mock.patch.object(publish, "load_config", return_value=self.cfg),
             mock.patch.object(yt, "upload_clip", return_value={"video_id": "v1", "url": "https://shorts/v1"}) as yt_upload,
             mock.patch.object(tk, "upload_clip", return_value={"publish_id": "p1"}) as tk_upload,
-            mock.patch.object(logutil, "record_publish", side_effect=lambda *a, **k: recorded.append(a)),
         ):
-            results = publish.crosspost(self.video, self.data, ["youtube", "tiktok"], None, "Caption")
+            results = publish.crosspost(
+                self.video, self.data, ["youtube", "tiktok"], None, "Caption", force=True
+            )
         self.assertEqual(results["youtube"]["video_id"], "v1")
         self.assertEqual(results["tiktok"]["publish_id"], "p1")
-        yt_upload.assert_called_once()
-        tk_upload.assert_called_once()
-        states = [call[2] for call in recorded]
-        self.assertEqual(states, ["CROSSPOST_YOUTUBE", "CROSSPOST_TIKTOK"])
+        self.assertEqual(yt_upload.call_args.kwargs["clip_id"], "clip_x")
+        self.assertTrue(yt_upload.call_args.kwargs["force"])
+        self.assertEqual(tk_upload.call_args.kwargs["clip_id"], "clip_x")
+        self.assertTrue(tk_upload.call_args.kwargs["force"])
+
+    def test_crosspost_bao_target_bi_bo_qua(self):
+        with (
+            mock.patch.object(publish, "load_config", return_value=self.cfg),
+            mock.patch.object(yt, "upload_clip", return_value={"skipped": True, "reason": "đã đăng"}),
+        ):
+            results = publish.crosspost(self.video, self.data, ["youtube"], None, "Caption")
+        self.assertTrue(results["youtube"]["skipped"])
 
     def test_loi_mot_nen_tang_khong_anh_huong_nen_tang_khac(self):
         with (
@@ -396,6 +404,104 @@ class PublishCrosspostTest(unittest.TestCase):
             mock.patch("make_video.make_cover", side_effect=SystemExit("ffmpeg chết")),
         ):
             self.assertIsNone(publish.make_clip_cover(self.video, self.data))
+
+
+class UploaderDedupeTest(unittest.TestCase):
+    """Uploader phải tự chặn đăng trùng và tự ghi log khi chạy trực tiếp."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.video = make_video(Path(self.tmp.name))
+        self.cfg = Cfg({"facebook": {"max_retries": 1, "retry_max_delay_seconds": 5},
+                        "crosspost": {}})
+
+    def test_youtube_bo_qua_khi_da_crosspost(self):
+        previous = {"clip_id": "clip_x", "state": "CROSSPOST_YOUTUBE", "url": "https://cu",
+                    "iso": "2026-09-01T00:00:00Z"}
+        with (
+            mock.patch.object(yt, "load_config", return_value=self.cfg),
+            mock.patch.object(yt, "already_crossposted", return_value=previous),
+            mock.patch.object(yt, "access_token") as token,
+        ):
+            result = yt.upload_clip(self.video, {}, clip_id="clip_x")
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["url"], "https://cu")
+        token.assert_not_called()
+
+    def test_youtube_force_thi_dang_lai(self):
+        previous = {"clip_id": "clip_x", "state": "CROSSPOST_YOUTUBE", "iso": "x"}
+        env = {"client_id": "cid", "client_secret": "sec", "refresh_token": "ref"}
+        with (
+            mock.patch.object(yt, "load_config", return_value=self.cfg),
+            mock.patch.object(yt, "already_crossposted", return_value=previous) as guard,
+            mock.patch.object(yt, "load_youtube_env", return_value=env),
+            mock.patch.object(yt, "access_token", return_value="at"),
+            mock.patch.object(yt, "init_resumable_upload", return_value="https://session"),
+            mock.patch.object(yt, "upload_bytes", return_value={"id": "vid1"}),
+            mock.patch.object(yt, "record_publish") as record,
+        ):
+            result = yt.upload_clip(self.video, {}, clip_id="clip_x", force=True)
+        self.assertEqual(result["video_id"], "vid1")
+        guard.assert_not_called()
+        self.assertEqual(record.call_args.args[2], "CROSSPOST_YOUTUBE")
+
+    def test_youtube_ghi_log_sau_khi_dang(self):
+        env = {"client_id": "cid", "client_secret": "sec", "refresh_token": "ref"}
+        with (
+            mock.patch.object(yt, "load_config", return_value=self.cfg),
+            mock.patch.object(yt, "load_youtube_env", return_value=env),
+            mock.patch.object(yt, "access_token", return_value="at"),
+            mock.patch.object(yt, "init_resumable_upload", return_value="https://session"),
+            mock.patch.object(yt, "upload_bytes", return_value={"id": "vid1"}),
+            mock.patch.object(yt, "record_publish") as record,
+        ):
+            yt.upload_clip(self.video, {}, clip_id="clip_x")
+        args = record.call_args.args
+        self.assertEqual(args[0], "clip_x")
+        self.assertEqual(args[1], "vid1")
+        self.assertEqual(args[2], "CROSSPOST_YOUTUBE")
+
+    def test_khong_co_clip_id_thi_khong_kiem_trung(self):
+        env = {"client_id": "cid", "client_secret": "sec", "refresh_token": "ref"}
+        with (
+            mock.patch.object(yt, "load_config", return_value=self.cfg),
+            mock.patch.object(yt, "already_crossposted") as guard,
+            mock.patch.object(yt, "load_youtube_env", return_value=env),
+            mock.patch.object(yt, "access_token", return_value="at"),
+            mock.patch.object(yt, "init_resumable_upload", return_value="https://session"),
+            mock.patch.object(yt, "upload_bytes", return_value={"id": "vid1"}),
+            mock.patch.object(yt, "record_publish") as record,
+        ):
+            yt.upload_clip(self.video, {})
+        guard.assert_not_called()
+        record.assert_not_called()
+
+    def test_tiktok_bo_qua_khi_da_crosspost(self):
+        previous = {"clip_id": "clip_x", "state": "CROSSPOST_TIKTOK", "video_id": "p_cu"}
+        with (
+            mock.patch.object(tk, "load_config", return_value=self.cfg),
+            mock.patch.object(tk, "already_crossposted", return_value=previous),
+            mock.patch.object(tk, "init_upload") as init,
+        ):
+            result = tk.upload_clip(self.video, "Caption", clip_id="clip_x")
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["publish_id"], "p_cu")
+        init.assert_not_called()
+
+    def test_tiktok_ghi_log_sau_khi_dang(self):
+        env = {"access_token": "tok", "privacy_level": "SELF_ONLY"}
+        with (
+            mock.patch.object(tk, "load_config", return_value=self.cfg),
+            mock.patch.object(tk, "load_tiktok_env", return_value=env),
+            mock.patch.object(tk, "init_upload", return_value=("p1", "https://up")),
+            mock.patch.object(tk, "upload_chunk"),
+            mock.patch.object(tk, "publish_status", return_value={"status": "PROCESSING_UPLOAD"}),
+            mock.patch.object(tk, "record_publish") as record,
+        ):
+            tk.upload_clip(self.video, "Caption", clip_id="clip_x")
+        args = record.call_args.args
+        self.assertEqual((args[0], args[1], args[2]), ("clip_x", "p1", "CROSSPOST_TIKTOK"))
 
 
 if __name__ == "__main__":

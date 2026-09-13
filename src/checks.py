@@ -15,6 +15,11 @@ FPS_RE = re.compile(r"([\d.]+)\s+fps")
 SAMPLE_RATE_RE = re.compile(r"(\d{2,6})\s*Hz")
 CHANNELS = {"mono": 1, "stereo": 2, "2.1": 3, "5.1": 6, "7.1": 8}
 S16LE_BYTES_PER_SAMPLE = 2
+# Encoder/filter pipeline bắt buộc phải có; thiếu là render chết giữa chừng.
+REQUIRED_ENCODERS = ("libx264", "aac")
+REQUIRED_FILTERS = ("zoompan", "sidechaincompress", "loudnorm", "gradients", "anoisesrc")
+# Chỉ cần khi bật phụ đề burn-in (libass).
+OPTIONAL_FILTERS = ("subtitles",)
 
 
 def require_ffmpeg() -> None:
@@ -136,6 +141,51 @@ def audio_stream_seconds(path: Path, sample_rate: int | None = None, channels: i
         return 0.0
     samples = len(proc.stdout) / (S16LE_BYTES_PER_SAMPLE * max(channels, 1))
     return samples / rate
+
+
+def parse_capabilities(blob: str) -> set[str]:
+    """Bóc tên encoder/filter từ output `ffmpeg -encoders` / `-filters`.
+
+    Encoder có cột cờ 6 ký tự (` V....D libx264 ...`), filter có cột cờ 3–4 ký tự
+    (`.SC zoompan`), và phần chú giải cũng có dạng `T.. = Timeline support` nên phải loại.
+
+    @param blob stderr+stdout của ffmpeg
+    @returns tập tên (đã lowercase)
+    """
+    names: set[str] = set()
+    for line in blob.splitlines():
+        if " = " in line:
+            continue
+        match = re.match(r"^\s*[A-Z.]{3,6}\s+([A-Za-z0-9_]+)\s", line)
+        if match:
+            names.add(match.group(1).lower())
+    return names
+
+
+def ffmpeg_capabilities() -> tuple[set[str], set[str]]:
+    """Encoder và filter mà ffmpeg hiện có.
+
+    @returns (encoders, filters); rỗng nếu không chạy được ffmpeg
+    """
+    result: list[set[str]] = []
+    for flag in ("-encoders", "-filters"):
+        proc = subprocess.run(["ffmpeg", "-hide_banner", flag], capture_output=True, text=True)
+        result.append(parse_capabilities(f"{proc.stderr or ''}{proc.stdout or ''}"))
+    return result[0], result[1]
+
+
+def ffmpeg_gaps(cfg=None) -> tuple[list[str], list[str]]:
+    """Encoder/filter còn thiếu so với yêu cầu của pipeline.
+
+    @param cfg config, mặc định đọc config.yaml (bật phụ đề thì `subtitles` thành bắt buộc)
+    @returns (thiếu bắt buộc, thiếu tuỳ chọn)
+    """
+    cfg = cfg or load_config()
+    encoders, filters = ffmpeg_capabilities()
+    missing_encoders = [name for name in REQUIRED_ENCODERS if name not in encoders]
+    missing_filters = [name for name in REQUIRED_FILTERS if name not in filters]
+    optional = [name for name in OPTIONAL_FILTERS if name not in filters]
+    return missing_encoders + missing_filters, optional
 
 
 def clamp_duration(seconds: float) -> float:

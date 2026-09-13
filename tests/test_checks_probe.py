@@ -11,7 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checks import audio_stream_seconds, ffmpeg_stream_info, parse_stream_info  # noqa: E402
+from checks import (  # noqa: E402
+    audio_stream_seconds,
+    ffmpeg_gaps,
+    ffmpeg_stream_info,
+    parse_capabilities,
+    parse_stream_info,
+)
 
 # Output thật của `ffmpeg -i` cho file do pipeline sinh ra
 CAPTURED = """Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'assets/out/clip_001.mp4':
@@ -84,6 +90,62 @@ class RealProbeTest(unittest.TestCase):
         broken = Path(self.tmp.name) / "broken.mp4"
         broken.write_bytes(b"khong phai video")
         self.assertEqual(audio_stream_seconds(broken), 0.0)
+
+
+# Output thật (rút gọn) của `ffmpeg -encoders` và `-filters`
+CAPTURED_ENCODERS = """Encoders:
+ V..... = Video
+ A..... = Audio
+ ------
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3)
+"""
+CAPTURED_FILTERS = """Filters:
+  T.. = Timeline support
+  .S. = Slice threading
+  ..C = Command support
+  A = Audio input/output
+  V = Video input/output
+  N = Dynamic number and/or type of input/output
+  | = Source or sink filter
+ ... zoompan           V->V       Apply Zoom & Pan effect.
+ ..C sidechaincompress AA->A      Sidechain compressor.
+ ... loudnorm          A->A       EBU R128 loudness normalization
+ ... gradients         |->V       Draw a gradients.
+ ... anoisesrc         |->A       Generate a noise audio signal.
+ ... subtitles         V->V       Render text subtitles onto input video using libass.
+"""
+
+
+class ParseCapabilitiesTest(unittest.TestCase):
+    def test_boc_encoder(self):
+        names = parse_capabilities(CAPTURED_ENCODERS)
+        self.assertIn("libx264", names)
+        self.assertIn("aac", names)
+        self.assertNotIn("video", names)
+
+    def test_boc_filter_va_bo_dong_chu_giai(self):
+        names = parse_capabilities(CAPTURED_FILTERS)
+        self.assertIn("zoompan", names)
+        self.assertIn("sidechaincompress", names)
+        self.assertIn("loudnorm", names)
+        self.assertIn("subtitles", names)
+        # các dòng chú giải ("T.. = Timeline support") không được thành tên filter
+        self.assertNotIn("=", names)
+        self.assertNotIn("timeline", names)
+
+    def test_output_rong(self):
+        self.assertEqual(parse_capabilities(""), set())
+
+
+@unittest.skipIf(shutil.which("ffmpeg") is None, "không có ffmpeg")
+class RealCapabilitiesTest(unittest.TestCase):
+    def test_ffmpeg_that_co_du_codec_va_filter(self):
+        missing, optional = ffmpeg_gaps()
+        self.assertEqual(missing, [], f"ffmpeg thiếu {missing}")
+        # subtitles chỉ cần khi bật phụ đề nên không tính là bắt buộc
+        self.assertIsInstance(optional, list)
 
 
 if __name__ == "__main__":

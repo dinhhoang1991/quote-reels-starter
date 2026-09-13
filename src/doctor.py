@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from checks import estimate_voice_seconds
+from checks import estimate_voice_seconds, ffmpeg_gaps
 from config import Cfg, load_config, resolve_path, root
 from logutil import log
 from make_video import ken_burns_plan
@@ -79,6 +79,19 @@ def check_environment() -> list[Check]:
         )
     ffmpeg = shutil.which("ffmpeg")
     checks.append(Check(OK if ffmpeg else FAIL, "ffmpeg", ffmpeg or "thiếu, cài FFmpeg rồi chạy lại"))
+    if ffmpeg:
+        missing, optional_missing = ffmpeg_gaps()
+        checks.append(
+            Check(OK if not missing else FAIL, "ffmpeg codec/filter",
+                  "đủ libx264/aac/zoompan/sidechaincompress/loudnorm"
+                  if not missing else "thiếu " + ", ".join(sorted(missing)))
+        )
+        if optional_missing:
+            checks.append(
+                Check(WARN, "ffmpeg tuỳ chọn",
+                      "thiếu " + ", ".join(sorted(optional_missing))
+                      + " — chỉ cần khi bật phụ đề burn-in")
+            )
     ffprobe = shutil.which("ffprobe")
     checks.append(
         Check(OK if ffprobe else WARN, "ffprobe",
