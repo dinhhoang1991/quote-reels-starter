@@ -22,7 +22,7 @@ from pathlib import Path
 
 from config import load_config, root
 from logutil import already_crossposted, crosspost_state, log, record_publish
-from schema import load_clip
+from schema import compose_caption, load_clip
 from upload_facebook import api_error, request_with_retry
 
 ROOT = root()
@@ -207,6 +207,9 @@ def upload_clip(
     cfg = load_config()
     env = load_tiktok_env()
     privacy = (privacy_level or env["privacy_level"]).upper()
+    section = cfg.get("crosspost", {}) or {}
+    # TikTok đặt hashtag ngay trong caption; ưu tiên `tiktok_caption` trong JSON.
+    title = compose_caption(title, str(section.get("tiktok_tags", "") or ""))
     size = video.stat().st_size if video.exists() else 0
     payload = init_payload(size, title, privacy, cover_timestamp_ms)
     if dry_run:

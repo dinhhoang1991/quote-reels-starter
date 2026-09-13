@@ -15,7 +15,7 @@ from jobqueue import move as queue_move
 from jobqueue import next_pending, queue_lock
 from logutil import log, remaining_quota
 from make_video import build
-from notify import notify_empty_queue, notify_publish_failure, notify_publish_success
+from notify import notify, notify_empty_queue, notify_publish_failure, notify_publish_success
 from schema import load_clip
 from upload_facebook import caption_from_json, load_env, upload_reel
 
@@ -102,7 +102,8 @@ def crosspost(
                 from upload_tiktok import upload_clip as upload_tiktok
 
                 result = upload_tiktok(
-                    video, caption or str(data.get("title", "")),
+                    video,
+                    str(data.get("tiktok_caption") or caption or data.get("title", "")),
                     cover_timestamp_ms=cover_ms, clip_id=clip_id, force=force,
                 )
             else:
@@ -188,6 +189,84 @@ def publish_one(
         crosspost(video, data, crosspost_targets, cover, caption, force=force)
 
 
+def publish_clip(json_path: Path, args, targets: list[str], from_queue: bool) -> tuple[bool, str]:
+    """Render và đăng 1 clip, xử lý lỗi theo hàng chờ.
+
+    @param json_path clip cần đăng
+    @param args tham số dòng lệnh
+    @param targets nền tảng cross-post
+    @param from_queue True nếu clip lấy từ pending/ (lỗi thì move sang failed/)
+    @returns (thành công?, mô tả lỗi)
+    """
+    try:
+        publish_one(
+            json_path,
+            Path(args.footage) if args.footage else None,
+            Path(args.music) if args.music else None,
+            Path(args.voice) if args.voice else None,
+            args.state,
+            args.skip_upload,
+            args.force,
+            crosspost_targets=targets,
+            no_first_comment=args.no_first_comment,
+        )
+    except (SystemExit, Exception) as exc:
+        # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
+        # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
+        error = describe_error(exc)
+        if from_queue:
+            dest = queue_fail(json_path, error)
+            log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
+        notify_publish_failure(json_path.stem, error)
+        return False, error
+    if from_queue:
+        dest = queue_move(json_path, "done")
+        log(f"moved to {dest}")
+    return True, ""
+
+
+def run_batch(args, targets: list[str], cfg) -> int:
+    """Xử lý tối đa `--max` clip trong hàng chờ.
+
+    Dừng sớm khi gặp 2 lỗi liên tiếp giống nhau (thường là lỗi hệ thống như token hỏng),
+    để không đốt cả hàng chờ vào cùng một nguyên nhân.
+
+    @param args tham số dòng lệnh (dùng --max)
+    @param targets nền tảng cross-post
+    @param cfg config đang dùng
+    @returns exit code (0 nếu mọi clip thành công)
+    """
+    limit = int(args.max)
+    done = failed = 0
+    previous_error = ""
+    attempts = 0
+    while limit == 0 or attempts < limit:
+        json_path = next_pending()
+        if json_path is None:
+            if attempts == 0:
+                notify_empty_queue()
+                raise SystemExit(
+                    "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
+                )
+            break
+        attempts += 1
+        log(f"queue: {json_path} ({attempts}{'' if limit == 0 else f'/{limit}'})")
+        ok, error = publish_clip(json_path, args, targets, from_queue=True)
+        if ok:
+            done += 1
+            previous_error = ""
+            continue
+        failed += 1
+        if error and error == previous_error:
+            detail = f"lỗi lặp lại ({error}) — dừng batch sau {attempts} clip"
+            log(detail)
+            notify(detail, level="error")
+            break
+        previous_error = error
+    log(f"batch: {done} thành công, {failed} lỗi")
+    return 1 if failed else 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render + upload Facebook Reels")
     parser.add_argument("--json", default="", help="File JSON cụ thể")
@@ -200,10 +279,16 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-first-comment", action="store_true", help="Không đăng comment đầu")
     parser.add_argument(
+        "--max", type=int, default=1,
+        help="Số clip lấy từ hàng chờ trong 1 lần chạy; 0 = dọn hết queue",
+    )
+    parser.add_argument(
         "--crosspost", default=None,
         help="Đăng thêm nền tảng khác: 'youtube,tiktok' hoặc 'none' (mặc định theo config)",
     )
     args = parser.parse_args()
+    if args.max < 0:
+        raise SystemExit("--max phải >= 0 (0 = dọn hết queue)")
 
     json_path: Path | None = Path(args.json) if args.json else None
     from_queue = bool(args.queue or json_path is None)
@@ -213,38 +298,15 @@ def main() -> None:
 
     # Khoá trước khi đọc pending: hai cron chạy chồng sẽ lấy trùng 1 clip.
     with queue_lock(stale) if from_queue else nullcontext():
-        if from_queue:
-            json_path = next_pending()
-            if json_path is None:
-                notify_empty_queue()
-                raise SystemExit(
-                    "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
-                )
-            log(f"queue: {json_path}")
-
-        try:
-            publish_one(
-                json_path,
-                Path(args.footage) if args.footage else None,
-                Path(args.music) if args.music else None,
-                Path(args.voice) if args.voice else None,
-                args.state,
-                args.skip_upload,
-                args.force,
-                crosspost_targets=targets,
-                no_first_comment=args.no_first_comment,
-            )
-        except (SystemExit, Exception) as exc:
-            # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
-            # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
-            if from_queue:
-                dest = queue_fail(json_path, describe_error(exc))
-                log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
-            notify_publish_failure(json_path.stem, describe_error(exc))
-            raise
-        if from_queue:
-            dest = queue_move(json_path, "done")
-            log(f"moved to {dest}")
+        if not from_queue:
+            ok, error = publish_clip(json_path, args, targets, from_queue=False)
+            if not ok:
+                raise SystemExit(f"Đăng thất bại: {error}")
+            return
+        code = run_batch(args, targets, cfg)
+        if code:
+            # Batch đã ghi lỗi vào _queue.last_error và gửi cảnh báo; exit code để cron biết.
+            raise SystemExit(code)
 
 
 if __name__ == "__main__":

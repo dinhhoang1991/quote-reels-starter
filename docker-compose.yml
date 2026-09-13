@@ -16,6 +16,7 @@ services:
     environment:
       SCHEDULE_HOUR: "7"
       SCHEDULE_MINUTE: "0"
+      SCHEDULE_TZ: "Asia/Ho_Chi_Minh"
       DOCTOR_STRICT: "0"
     volumes:
       # Asset và dữ liệu phải nằm trên host để không mất khi build lại image

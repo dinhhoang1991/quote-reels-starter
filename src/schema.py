@@ -22,6 +22,9 @@ CONTENT_LIMITS = {
     "text_words": 8,
     "min_items": 8,
     "max_items": 10,
+    "first_comment_chars": 200,
+    "tiktok_caption_chars": 2200,
+    "youtube_caption_chars": 5000,
 }
 NON_WORD_RE = re.compile(r"[^a-z0-9 ]+")
 
@@ -71,6 +74,9 @@ def validate_clip(data: Any, source: str = "clip") -> dict[str, Any]:
     data["caption"] = str(data.get("caption") or "").strip()
     data["topic"] = str(data.get("topic") or "").strip()
     data["voice_script"] = str(data.get("voice_script") or "").strip()
+    data["first_comment"] = str(data.get("first_comment") or "").strip()
+    data["youtube_caption"] = str(data.get("youtube_caption") or "").strip()
+    data["tiktok_caption"] = str(data.get("tiktok_caption") or "").strip()
     if not data["voice_script"]:
         data["voice_script"] = default_voice_script(data)
     if not data["caption"]:
@@ -113,6 +119,18 @@ def content_warnings(data: dict[str, Any]) -> list[str]:
             long_labels.append(idx)
         if len(str(item.get("text", "")).split()) > CONTENT_LIMITS["text_words"]:
             long_texts.append(idx)
+    first_comment = str(data.get("first_comment") or "")
+    if len(first_comment) > CONTENT_LIMITS["first_comment_chars"]:
+        warnings.append(
+            f"first_comment dài {len(first_comment)} ký tự, khuyến nghị tối đa "
+            f"{CONTENT_LIMITS['first_comment_chars']} (1–2 câu)"
+        )
+    for field, limit in (("tiktok_caption", "tiktok_caption_chars"),
+                         ("youtube_caption", "youtube_caption_chars")):
+        value = str(data.get(field) or "")
+        if len(value) > CONTENT_LIMITS[limit]:
+            warnings.append(f"{field} dài {len(value)} ký tự, sẽ bị cắt còn {CONTENT_LIMITS[limit]}")
+
     if long_labels:
         warnings.append(
             f"{len(long_labels)} item có label quá {CONTENT_LIMITS['label_words']} chữ "
@@ -189,6 +207,20 @@ def default_voice_script(data: dict[str, Any]) -> str:
     if data.get("footer"):
         parts.append(str(data["footer"]))
     return " ".join(parts)
+
+
+def compose_caption(base: str, extra: str = "") -> str:
+    """Ghép caption với hashtag phụ, không thêm trùng.
+
+    @param base caption chính
+    @param extra hashtag/đuôi thêm vào
+    @returns caption đã ghép
+    """
+    text = str(base).strip()
+    extra = str(extra).strip()
+    if extra and extra not in text:
+        text = f"{text}\n\n{extra}".strip()
+    return text
 
 
 def default_caption(data: dict[str, Any]) -> str:

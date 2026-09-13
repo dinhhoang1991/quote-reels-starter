@@ -68,10 +68,15 @@ class QueueFailureTest(unittest.TestCase):
         return mock.patch.object(sys, "argv", ["publish.py", "--queue", "--skip-upload"])
 
     def test_ffmpeg_crash_moves_job_out_of_pending(self):
-        """Lỗi không phải SystemExit (ffmpeg) trước đây để job kẹt trong pending mãi."""
+        """Lỗi không phải SystemExit (ffmpeg) trước đây để job kẹt trong pending mãi.
+
+        Batch đổi exception thành exit code 1 (lỗi đã nằm ở _queue.last_error + cảnh báo),
+        nên test kiểm SystemExit(1) thay vì RuntimeError.
+        """
         crashed = mock.patch.object(publish, "publish_one", side_effect=RuntimeError("ffmpeg chết"))
-        with crashed, self.argv_queue(), self.assertRaises(RuntimeError):
+        with crashed, self.argv_queue(), self.assertRaises(SystemExit) as ctx:
             publish.main()
+        self.assertEqual(ctx.exception.code, 1)
         self.assertFalse(self.job.exists())
         meta = self.failed_job()["_queue"]
         self.assertEqual(meta["attempts"], 1)

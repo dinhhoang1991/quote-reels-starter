@@ -105,6 +105,9 @@ crosspost:
   youtube_category_id: "22"
   youtube_privacy: public
   tiktok_privacy: SELF_ONLY
+  # Hashtag riêng từng nền tảng (ghép thêm vào caption, không thêm trùng)
+  youtube_tags: ""
+  tiktok_tags: ""
 
 subtitles:
   # Phụ đề burn-in từ timing từng từ của edge-tts (chỉ có khi để script tự đọc).
@@ -137,11 +140,13 @@ notify:
   on_empty_queue: true   # true = cảnh báo khi --queue không còn clip nào
 
 schedule:
-  # Dùng cho `src/scheduler.py` (container/Docker). Giờ UTC; cron của host thì dùng
-  # scripts/cron.example. Biến môi trường SCHEDULE_HOUR/MINUTE/COMMAND ghi đè config này.
+  # Dùng cho `src/scheduler.py` (container/Docker). Giờ hiểu theo `timezone`.
+  # cron của host thì dùng scripts/cron.example.
+  # Biến môi trường SCHEDULE_HOUR/MINUTE/COMMAND/TZ ghi đè config này.
   hour: 7
   minute: 0
-  command: "python3 src/publish.py --queue"
+  timezone: "Asia/Ho_Chi_Minh"
+  command: "python3 src/publish.py --queue --max 1"
 
 cleanup:
   # `src/cleanup.py` chỉ xoá file cũ hơn số ngày này và không nằm trong queue.

@@ -203,9 +203,10 @@ class WiringTest(EnvMixin):
             mock.patch.object(publish, "next_pending", return_value=Path("/tmp/clip_001.json")),
             mock.patch.object(publish, "load_config", return_value=Cfg({"queue": {}})),
             mock.patch.object(sys, "argv", ["publish.py", "--queue"]),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(SystemExit) as ctx,
         ):
             publish.main()
+        self.assertEqual(ctx.exception.code, 1)   # batch báo lỗi bằng exit code
         alert.assert_called_once()
         self.assertEqual(alert.call_args.args[0], "clip_001")
 
