@@ -120,6 +120,9 @@ subtitles:
   font_size: 64
   margin_v: 470             # cách đáy — phải cao hơn footer của overlay (1496px)
   margin_h: 60
+  # Khe hở giữa item cuối của overlay và dải phụ đề. Overlay tự dừng trước dải này
+  # (đỉnh dải = chiều cao - margin_v - font_size) nên item không bị phụ đề vẽ đè.
+  overlay_gap: 16
   primary_color: "#FFFFFF"
   highlight_color: "#FFE566"
   outline_color: "#000000"

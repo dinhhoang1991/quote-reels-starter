@@ -5,15 +5,23 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from PIL import Image, ImageDraw  # noqa: E402
 
-from config import load_config  # noqa: E402
-from render_overlay import OverlayFitError, fit_title, render_overlay  # noqa: E402
+import render_overlay as overlay_module  # noqa: E402
+from config import Cfg, load_config  # noqa: E402
+from render_overlay import (  # noqa: E402
+    OverlayFitError,
+    content_bottom_limit,
+    fit_title,
+    render_overlay,
+)
 from schema import load_clip, validate_clip  # noqa: E402
+from subtitles import overlay_limit  # noqa: E402
 
 FONTS = ROOT / "assets" / "fonts"
 SAMPLES = ROOT / "data" / "samples"
@@ -38,17 +46,41 @@ class OverlayTest(unittest.TestCase):
         self.cfg = load_config()
         self.panel_bottom = int(self.cfg.video.height) - int(self.cfg.safe_zone.bottom)
         self.footer_y = self.panel_bottom - 64
+        self.height = int(self.cfg.video.height)
+        self.subtitle_style = (self.cfg.get("subtitles", {}) or {}).as_dict()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.out = Path(self.tmp.name)
 
-    def render(self, data: dict, mode: str, footer: bool = True) -> list[int]:
+    def render(self, data: dict, mode: str, footer: bool = True, cfg=None) -> list[int]:
         payload = dict(data)
         if not footer:
             payload["footer"] = ""
-        out = self.out / f"{data['id']}_{mode}_{int(footer)}.png"
-        render_overlay(payload, FONTS, out, mode=mode)
+        out = self.out / f"{data['id']}_{mode}_{int(footer)}_{cfg is not None}.png"
+        if cfg is None:
+            render_overlay(payload, FONTS, out, mode=mode)
+        else:
+            with mock.patch.object(overlay_module, "load_config", return_value=cfg):
+                render_overlay(payload, FONTS, out, mode=mode)
         return ink_rows(out)
+
+    def long_items(self, count: int, clip_id: str = "dai") -> dict:
+        """Clip `count` item chữ dài — đúng khoảng 8-10 item mà content_warnings khuyến nghị."""
+        return validate_clip(
+            {
+                "id": clip_id,
+                "title": "TIÊU ĐỀ KIỂM TRA",
+                "items": [
+                    {
+                        "label": f"Nhãn siêu dài cho mục số {i}",
+                        "text": "Phần giải thích khá dài dòng cho mục này để xem chữ có bị "
+                        "tràn ra ngoài khung an toàn hay không",
+                    }
+                    for i in range(1, count + 1)
+                ],
+                "footer": "BẠN NGHĨ SAO?",
+            }
+        )
 
     def test_samples_stay_inside_safe_zone(self):
         for name in ("clip_001", "clip_002"):
@@ -135,6 +167,31 @@ class OverlayTest(unittest.TestCase):
         )
         rows = self.render(data, "full", footer=False)
         self.assertLessEqual(rows[-1], self.footer_y - 12)
+
+    def test_items_stop_above_the_subtitle_band(self):
+        """8-9 item chữ dài trước đây chạm tới 1436-1450px, đè lên dải phụ đề 1386-1450px."""
+        limit = overlay_limit(self.subtitle_style, self.height)
+        self.assertEqual(limit, 1370)
+        for count in (8, 9):
+            with self.subTest(items=count):
+                data = self.long_items(count, clip_id=f"dai_{count}")
+                rows = self.render(data, "full", footer=False)
+                self.assertLessEqual(rows[-1], limit, f"{count} item đè lên dải phụ đề")
+
+    def test_overlay_reclaims_the_subtitle_band_when_subtitles_are_off(self):
+        off = Cfg({**self.cfg.as_dict(), "subtitles": {**self.subtitle_style, "enabled": False}})
+        data = self.long_items(9, clip_id="tat_phu_de")
+        rows_on = self.render(data, "full", footer=False)
+        rows_off = self.render(data, "full", footer=False, cfg=off)
+        self.assertLessEqual(rows_on[-1], overlay_limit(self.subtitle_style, self.height))
+        self.assertGreater(rows_off[-1], overlay_limit(self.subtitle_style, self.height))
+        self.assertLessEqual(rows_off[-1], self.footer_y - 12)
+
+    def test_content_bottom_limit_follows_the_subtitles_switch(self):
+        limit_on = content_bottom_limit(self.footer_y, self.height, self.cfg)
+        off = Cfg({**self.cfg.as_dict(), "subtitles": {**self.subtitle_style, "enabled": False}})
+        self.assertEqual(content_bottom_limit(self.footer_y, self.height, off), self.footer_y - 24)
+        self.assertEqual(limit_on, overlay_limit(self.subtitle_style, self.height))
 
 
 if __name__ == "__main__":
