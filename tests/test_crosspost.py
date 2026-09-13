@@ -120,12 +120,16 @@ class YoutubeFlowTest(unittest.TestCase):
             yt.init_resumable_upload(self.video, "at", {}, 1)
 
     def test_upload_tra_ve_video_id_va_url_shorts(self):
-        with mock.patch.object(yt, "request_with_retry", return_value=fake_response(200, {"id": "vid9"})):
+        with mock.patch.object(yt, "request_file_with_retry",
+                               return_value=fake_response(200, {"id": "vid9"})):
             resource = yt.upload_bytes("https://upload/session", self.video, "at", 1)
         self.assertEqual(resource["id"], "vid9")
 
     def test_308_bao_file_qua_lon(self):
-        with mock.patch.object(yt, "request_with_retry", return_value=fake_response(308)), self.assertRaises(SystemExit) as ctx:
+        with (
+            mock.patch.object(yt, "request_file_with_retry", return_value=fake_response(308)),
+            self.assertRaises(SystemExit) as ctx,
+        ):
             yt.upload_bytes("https://upload/session", self.video, "at", 1)
         self.assertIn("308", str(ctx.exception))
 
@@ -154,6 +158,8 @@ class YoutubeFlowTest(unittest.TestCase):
         with (
             mock.patch.object(yt, "request_with_retry", side_effect=fake_request),
             mock.patch.object(yt, "load_youtube_env", return_value=env),
+            mock.patch.object(yt, "request_file_with_retry",
+                              return_value=fake_response(200, {"id": "vid1"})),
         ):
             result = yt.upload_clip(
                 self.video, validate_clip(dict(CLIP)), tags="#a", cover=self.video, privacy="public"
@@ -177,6 +183,8 @@ class YoutubeFlowTest(unittest.TestCase):
         with (
             mock.patch.object(yt, "request_with_retry", side_effect=fake_request),
             mock.patch.object(yt, "load_youtube_env", return_value=env),
+            mock.patch.object(yt, "request_file_with_retry",
+                              return_value=fake_response(200, {"id": "vid1"})),
         ):
             result = yt.upload_clip(self.video, {}, cover=self.video)
         self.assertEqual(result["video_id"], "vid1")

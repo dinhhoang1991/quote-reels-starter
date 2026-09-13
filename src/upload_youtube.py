@@ -22,9 +22,9 @@ import os
 from pathlib import Path
 
 from config import load_config, root
-from logutil import PUBLISHED_STATE, load_log, log
+from logutil import log
 from schema import load_clip
-from upload_facebook import api_error, request_with_retry
+from upload_facebook import api_error, request_file_with_retry, request_with_retry
 
 ROOT = root()
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -176,17 +176,15 @@ def upload_bytes(session_url: str, video: Path, token: str, retries: int = 3) ->
     @returns video resource của YouTube
     """
     size = video.stat().st_size
-    with video.open("rb") as handle:
-        resp = request_with_retry(
-            "PUT", session_url, retries,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "video/mp4",
-                "Content-Length": str(size),
-            },
-            data=handle,
-            timeout=900,
-        )
+    resp = request_file_with_retry(
+        "PUT", session_url, video, retries,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "video/mp4",
+            "Content-Length": str(size),
+        },
+        timeout=900,
+    )
     if resp.status_code == 308:
         raise SystemExit("YouTube nhận một phần file (308) — file quá lớn cho upload 1 request")
     if resp.status_code >= 400:
@@ -285,15 +283,6 @@ def upload_clip(
             result["thumbnail_error"] = str(exc)
             log(f"cảnh báo: không đặt được thumbnail YouTube ({exc})")
     return result
-
-
-def published_captions() -> dict[str, str]:
-    """Caption đã lưu trong published log theo clip_id (nếu có)."""
-    captions: dict[str, str] = {}
-    for post in load_log().get("posts", []):
-        if str(post.get("state", "")).upper() == PUBLISHED_STATE and post.get("clip_id"):
-            captions[str(post["clip_id"])] = str(post.get("title", ""))
-    return captions
 
 
 def main() -> None:

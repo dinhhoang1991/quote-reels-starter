@@ -182,9 +182,42 @@ def start_session(page_id: str, token: str, version: str, retries: int) -> tuple
     return str(video_id), str(upload_url)
 
 
-def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -> None:
+def request_file_with_retry(
+    method: str, url: str, file_path: Path, retries: int, headers: dict, timeout: int
+) -> requests.Response:
+    """Gửi file lên URL, mở lại file ở MỖI lần thử.
+
+    Mở file một lần ngoài vòng lặp là lỗi: lần thử lại sẽ đọc từ cuối file và gửi body rỗng.
+
+    @param method HTTP method (POST/PUT)
+    @param url đích upload
+    @param file_path file cần gửi
+    @param retries số lần thử tối đa
+    @param headers header cố định, gồm cả Content-Length nếu server cần
+    @param timeout timeout mỗi request (giây)
+    @returns response cuối cùng (đã thử lại các lỗi tạm)
+    """
     cfg = load_config()
     max_delay = float(cfg.facebook.get("retry_max_delay_seconds", DEFAULT_MAX_DELAY))
+    last: requests.Response | None = None
+    for attempt in range(retries):
+        with file_path.open("rb") as handle:
+            resp = requests.request(method, url, headers=headers, data=handle, timeout=timeout)
+        last = resp
+        for line in usage_headers(resp):
+            log(line)
+        if resp.status_code < 400:
+            return resp
+        if not is_transient(resp) or attempt == retries - 1:
+            return resp
+        delay = retry_delay(resp, attempt, max_delay)
+        log(f"upload tạm lỗi {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
+        time.sleep(delay)
+    assert last is not None
+    return last
+
+
+def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -> None:
     size = video_path.stat().st_size
     headers = {
         "Authorization": f"OAuth {token}",
@@ -192,23 +225,12 @@ def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -
         "file_size": str(size),
         "Content-Type": "application/octet-stream",
     }
-    last_err = None
-    for attempt in range(retries):
-        with video_path.open("rb") as fh:
-            resp = requests.post(upload_url, headers=headers, data=fh, timeout=600)
-        if resp.status_code < 400:
-            data = resp.json() if resp.content else {}
-            if data and data.get("success") is False:
-                raise SystemExit(f"Upload thất bại: {data}")
-            return
-        last_err = resp
-        if not is_transient(resp) or attempt == retries - 1:
-            raise api_error(resp)
-        delay = retry_delay(resp, attempt, max_delay)
-        log(f"upload tạm lỗi {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
-        time.sleep(delay)
-    if last_err is not None:
-        raise api_error(last_err)
+    resp = request_file_with_retry("POST", upload_url, video_path, retries, headers, 600)
+    if resp.status_code >= 400:
+        raise api_error(resp)
+    data = resp.json() if resp.content else {}
+    if data and data.get("success") is False:
+        raise SystemExit(f"Upload thất bại: {data}")
 
 
 def wait_ready(video_id: str, token: str, version: str, timeout_s: int = 180) -> dict:
