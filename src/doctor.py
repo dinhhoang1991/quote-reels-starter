@@ -437,6 +437,18 @@ def check_token(cfg: Cfg, online: bool) -> list[Check]:
     return checks
 
 
+def load_project_env() -> None:
+    """Nạp .env trước mọi check để credential (YouTube/TikTok/Facebook) đọc được.
+
+    Bỏ qua khi thiếu `requests`: `check_environment` đã báo lỗi đó rồi.
+    """
+    try:
+        from upload_facebook import load_env
+    except SystemExit:
+        return
+    load_env(ROOT / ".env")
+
+
 def run_all(json_path: Path | None = None, online: bool = False) -> list[Check]:
     """Chạy toàn bộ kiểm tra, gom lại thành 1 danh sách.
 
@@ -444,6 +456,7 @@ def run_all(json_path: Path | None = None, online: bool = False) -> list[Check]:
     @param online có gọi Graph debug_token hay không
     @returns danh sách Check theo thứ tự chạy
     """
+    load_project_env()
     cfg = load_config()
     checks = check_environment()
     checks += check_assets(cfg)

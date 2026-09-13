@@ -21,11 +21,13 @@ from logutil import load_log, log
 from schema import load_clip
 
 DEFAULT_KEEP_DAYS = 30
+# Đuôi file pipeline tự sinh trong từng thư mục (ảnh cover là .jpg nên phải kể cả jpg/jpeg).
 TARGETS = (
     ("voice_dir", (".mp3", ".wav")),
-    ("overlay_dir", (".png",)),
+    ("overlay_dir", (".png", ".jpg", ".jpeg")),
     ("out_dir", (".mp4",)),
 )
+SUFFIXES = ("_hook", "_cover")
 
 
 @dataclass
@@ -68,14 +70,15 @@ def clip_id_of(path: Path) -> str:
     """Tách id clip từ tên file pipeline sinh ra.
 
     `clip_001.646d2e17d5.mp3` → `clip_001`; `clip_001_hook.png` → `clip_001`;
-    `clip_001.mp4` → `clip_001`.
+    `clip_001_cover.jpg` → `clip_001`; `clip_001.mp4` → `clip_001`.
 
     @param path file trong assets/voice|overlays|out
     @returns id clip, hoặc tên file bỏ đuôi nếu không khớp dạng nào
     """
     stem = path.stem
-    if stem.endswith("_hook"):
-        stem = stem[: -len("_hook")]
+    for suffix in SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
     if "." in stem:
         head, _, tail = stem.rpartition(".")
         if tail and all(char in "0123456789abcdef" for char in tail.lower()):
@@ -108,6 +111,8 @@ def collect(
     keep = float(keep_days if keep_days is not None else cfg.get("cleanup", {}).get(
         "keep_days", DEFAULT_KEEP_DAYS
     ))
+    if keep < 0:
+        raise SystemExit(f"keep_days phải >= 0, đang là {keep:g} (số âm sẽ xoá mọi file cũ)")
     current = time.time() if now is None else now
     protected = queued_clip_ids(cfg)
     published = published_clip_ids()

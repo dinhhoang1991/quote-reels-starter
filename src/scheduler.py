@@ -26,6 +26,17 @@ DEFAULT_MINUTE = 0
 DEFAULT_COMMAND = "python3 src/publish.py --queue"
 
 
+def _env_int(name: str, fallback: int) -> int:
+    """Đọc biến môi trường dạng số; báo lỗi rõ ràng thay vì traceback ValueError."""
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return fallback
+    try:
+        return int(str(raw).strip())
+    except ValueError as exc:
+        raise SystemExit(f"{name} phải là số nguyên, đang là {raw!r}") from exc
+
+
 def schedule_settings(cfg: Cfg | None = None) -> tuple[int, int, str]:
     """Giờ, phút và lệnh cần chạy theo lịch.
 
@@ -36,8 +47,8 @@ def schedule_settings(cfg: Cfg | None = None) -> tuple[int, int, str]:
     """
     cfg = cfg or load_config()
     section = cfg.get("schedule", {}) or {}
-    hour = int(os.getenv("SCHEDULE_HOUR") or section.get("hour", DEFAULT_HOUR))
-    minute = int(os.getenv("SCHEDULE_MINUTE") or section.get("minute", DEFAULT_MINUTE))
+    hour = _env_int("SCHEDULE_HOUR", int(section.get("hour", DEFAULT_HOUR)))
+    minute = _env_int("SCHEDULE_MINUTE", int(section.get("minute", DEFAULT_MINUTE)))
     command = str(os.getenv("SCHEDULE_COMMAND") or section.get("command", DEFAULT_COMMAND))
     if not 0 <= hour <= 23:
         raise SystemExit(f"schedule.hour phải trong 0–23, đang là {hour}")

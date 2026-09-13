@@ -60,6 +60,20 @@ class SettingsTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             scheduler.schedule_settings(self.cfg(minute=99))
 
+    def test_env_khong_phai_so_thi_bao_loi_ro(self):
+        cfg = self.cfg(hour=6)
+        with (
+            mock.patch.dict("os.environ", {"SCHEDULE_HOUR": "bay-gio"}),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            scheduler.schedule_settings(cfg)
+        self.assertIn("SCHEDULE_HOUR", str(ctx.exception))
+
+    def test_env_rong_thi_dung_config(self):
+        cfg = self.cfg(hour=6, minute=15)
+        with mock.patch.dict("os.environ", {"SCHEDULE_HOUR": "  ", "SCHEDULE_MINUTE": ""}):
+            self.assertEqual(scheduler.schedule_settings(cfg), (6, 15, "python3 src/publish.py --queue"))
+
 
 class RunDailyTest(unittest.TestCase):
     def test_ngu_dung_so_giay_roi_chay_lenh(self):

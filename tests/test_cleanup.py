@@ -69,6 +69,7 @@ class ClipIdTest(unittest.TestCase):
     def test_tach_id_tu_cac_dang_ten_file(self):
         self.assertEqual(cleanup.clip_id_of(Path("clip_001.646d2e17d5.mp3")), "clip_001")
         self.assertEqual(cleanup.clip_id_of(Path("clip_001_hook.png")), "clip_001")
+        self.assertEqual(cleanup.clip_id_of(Path("clip_001_cover.jpg")), "clip_001")
         self.assertEqual(cleanup.clip_id_of(Path("clip_001.png")), "clip_001")
         self.assertEqual(cleanup.clip_id_of(Path("clip_001.mp4")), "clip_001")
 
@@ -117,6 +118,26 @@ class CollectTest(unittest.TestCase):
         self.tree.add(self.tree.voice, "_placeholder.mp3", age_days=99)
         self.tree.add(self.tree.overlays, ".gitkeep", age_days=99)
         self.assertEqual(cleanup.collect(self.tree.cfg), [])
+
+    def test_don_ca_anh_cover_jpg(self):
+        """Ảnh cover (.jpg) trước đây không bao giờ được dọn."""
+        self.tree.add(self.tree.overlays, "clip_001_cover.jpg", age_days=40)
+        self.tree.add(self.tree.overlays, "clip_002_hook.png", age_days=40)
+        self.assertEqual(
+            self.names(cleanup.collect(self.tree.cfg)),
+            {"clip_001_cover.jpg", "clip_002_hook.png"},
+        )
+
+    def test_keep_days_am_thi_bao_loi(self):
+        """Số âm sẽ xoá mọi file cũ — phải chặn trước khi xoá."""
+        self.tree.add(self.tree.out, "clip_a.mp4", age_days=1)
+        with self.assertRaises(SystemExit) as ctx:
+            cleanup.collect(self.tree.cfg, keep_days=-1)
+        self.assertIn("keep_days", str(ctx.exception))
+
+    def test_keep_days_0_van_hop_le(self):
+        self.tree.add(self.tree.out, "clip_a.mp4", age_days=1)
+        self.assertEqual(len(cleanup.collect(self.tree.cfg, keep_days=0)), 1)
 
     def test_ly_do_da_dang_hay_chua(self):
         self.tree.publish("clip_dadang")
