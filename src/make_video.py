@@ -147,7 +147,57 @@ def audio_filter(cfg, duration: float, fade_out_start: float) -> str:
     )
 
 
+def cover_path(data: dict, cfg=None) -> Path:
+    """Đường dẫn ảnh cover của clip (dùng cho Reel cover, YouTube thumbnail…).
+
+    @param data clip đã validate
+    @param cfg config, mặc định đọc config.yaml
+    @returns đường dẫn trong assets/overlays/
+    """
+    cfg = cfg or load_config()
+    return resolve_path(cfg.paths.overlay_dir) / f"{data['id']}_cover.jpg"
+
+
+def cover_at_seconds(cfg=None) -> float:
+    """Mốc lấy ảnh cover: `cover.at_seconds`, mặc định giữa đoạn hook (tiêu đề hiện rõ).
+
+    @param cfg config, mặc định đọc config.yaml
+    @returns số giây
+    """
+    cfg = cfg or load_config()
+    configured = float((cfg.get("cover", {}) or {}).get("at_seconds", 0) or 0)
+    if configured > 0:
+        return configured
+    return max(float(cfg.hook.seconds) / 2, 0.1)
+
+
+def make_cover(video: Path, data: dict, cfg=None) -> Path:
+    """Trích 1 frame trong đoạn hook làm ảnh cover.
+
+    @param video file mp4 đã render
+    @param data clip đã validate
+    @param cfg config, mặc định đọc config.yaml
+    @returns đường dẫn ảnh jpg
+    """
+    cfg = cfg or load_config()
+    out = cover_path(data, cfg)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-ss", f"{cover_at_seconds(cfg):.2f}", "-i", str(video),
+            "-frames:v", "1", "-update", "1", "-q:v", "2", str(out),
+        ]
+    )
+    return out
+
+
 def first_file(folder: Path, exts: tuple[str, ...]) -> Path | None:
+    """File media đầu tiên (theo alphabet) trong thư mục, bỏ placeholder.
+
+    @param folder thư mục cần quét
+    @param exts đuôi file chấp nhận
+    @returns đường dẫn hoặc None
+    """
     if not folder.exists():
         return None
     files = [

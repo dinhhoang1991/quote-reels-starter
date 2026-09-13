@@ -45,3 +45,14 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Preflight phải sạch fail
         run: python src/doctor.py --json data/samples/clip_001.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t quote-reels-starter:ci .
+      - name: Doctor trong container (phải 0 fail)
+        run: docker run --rm --entrypoint python3 quote-reels-starter:ci src/doctor.py --json data/samples/clip_001.json
+      - name: Test suite trong container
+        run: docker run --rm --entrypoint python3 quote-reels-starter:ci -m unittest discover -s tests -t .

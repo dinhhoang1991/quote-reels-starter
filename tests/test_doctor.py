@@ -221,5 +221,45 @@ class RunAllTest(unittest.TestCase):
         self.assertTrue(levels(checks, doctor.WARN))
 
 
+class EnvOrderTest(unittest.TestCase):
+    """Credential trong .env phải được nạp TRƯỚC check_integrations."""
+
+    def test_doc_duoc_credential_tu_env_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text(
+                "YOUTUBE_CLIENT_ID=cid\nYOUTUBE_CLIENT_SECRET=sec\nYOUTUBE_REFRESH_TOKEN=ref\n"
+                "TIKTOK_ACCESS_TOKEN=tok\n",
+                encoding="utf-8",
+            )
+            cfg = config_with(crosspost={"targets": ["youtube", "tiktok"]})
+            with (
+                mock.patch.object(doctor, "ROOT", root),
+                mock.patch.object(doctor, "load_config", return_value=cfg),
+                mock.patch.dict("os.environ", {}, clear=True),
+            ):
+                all_checks = doctor.run_all(None)
+            misses = [
+                check for check in all_checks
+                if check.name.startswith("credential ") and check.level == doctor.FAIL
+            ]
+            self.assertEqual([f"{c.name}: {c.detail}" for c in misses], [])
+
+    def test_thieu_credential_thi_bao_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text("FB_PAGE_ID=1\n", encoding="utf-8")
+            cfg = config_with(crosspost={"targets": ["tiktok"]})
+            with (
+                mock.patch.object(doctor, "ROOT", root),
+                mock.patch.object(doctor, "load_config", return_value=cfg),
+                mock.patch.dict("os.environ", {}, clear=True),
+            ):
+                checks = doctor.check_integrations(cfg)
+            fails = [check for check in checks if check.level == doctor.FAIL]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("TIKTOK_ACCESS_TOKEN", fails[0].detail)
+
+
 if __name__ == "__main__":
     unittest.main()

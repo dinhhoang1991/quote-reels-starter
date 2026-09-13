@@ -213,6 +213,72 @@ Metric lấy theo `insights.metrics` trong `config.yaml`; Graph có thể từ c
 video/quyền token nên script thử lại từng metric và ghi lại cái lỗi vào `metrics_failed`.
 Dùng `summary` để biết chủ đề nào đang hiệu quả rồi ưu tiên ở vòng xoay.
 
+## Comment đầu tiên, ảnh cover
+
+Comment đầu (Page tự comment dưới Reel) lấy từ `first_comment` trong JSON clip, hoặc template
+`facebook.first_comment` trong `config.yaml` (placeholder `{title}`, `{footer}`, `{topic}`, `{caption}`).
+Để trống cả hai = không đăng comment. Bỏ qua bằng `--no-first-comment`.
+Comment lỗi không làm job fail vì Reel đã lên rồi — lỗi được ghi vào `first_comment_error`.
+
+Ảnh cover được trích từ 1 frame trong đoạn hook (`cover.at_seconds`, mặc định giữa hook) thành
+`assets/overlays/<id>_cover.jpg`; dùng làm thumbnail YouTube. Facebook nhận mốc `cover` qua
+`facebook.thumb_offset_ms` (0 = để Meta tự chọn) — nếu Graph/phiên bản API của bạn từ chối tham số
+này thì để 0.
+
+## Cross-post YouTube Shorts / TikTok
+
+```bash
+# xem trước request, không gọi mạng
+python3 src/upload_youtube.py --video assets/out/clip_001.mp4 --json data/samples/clip_001.json --dry-run
+python3 src/upload_tiktok.py  --video assets/out/clip_001.mp4 --json data/samples/clip_001.json --dry-run
+
+# đăng thật (cần credential trong .env, xem .env.example)
+python3 src/publish.py --json data/samples/clip_001.json --crosspost youtube,tiktok
+```
+
+Bật mặc định bằng `crosspost.targets: [youtube, tiktok]` trong `config.yaml`; `--crosspost none` để tắt
+cho một lần chạy. Lỗi ở một nền tảng chỉ được ghi lại, không làm hỏng bước đăng Facebook.
+
+- **YouTube**: cần OAuth client (scope `youtube.upload`) + `YOUTUBE_REFRESH_TOKEN`; video được đẩy
+  bằng resumable upload, tiêu đề tự thêm `#Shorts`, ảnh cover đặt qua `thumbnails.set`.
+- **TikTok**: cần `TIKTOK_ACCESS_TOKEN` (scope `video.publish`) và app đã được TikTok duyệt.
+  App chưa duyệt chỉ đăng được ở chế độ riêng tư — vì vậy mặc định `TIKTOK_PRIVACY_LEVEL=SELF_ONLY`.
+
+Hai uploader này **chưa được chạy với API thật** ở môi trường phát triển (không có app/account được
+duyệt); chúng được kiểm bằng HTTP giả trong `tests/test_crosspost.py` và có `--dry-run` để bạn soi
+request trước khi đăng.
+
+## Dọn file cũ
+
+```bash
+python3 src/cleanup.py                # liệt kê file cũ hơn cleanup.keep_days (mặc định 30 ngày)
+python3 src/cleanup.py --apply        # xoá thật
+python3 src/cleanup.py --days 7 --apply
+```
+
+Chỉ đụng tới `.mp3/.wav` trong `assets/voice`, `.png` trong `assets/overlays`, `.mp4` trong
+`assets/out`; **không** xoá file của clip đang nằm trong `data/queue/pending|failed`, không xoá
+`_placeholder*`/`.gitkeep`.
+
+## Chạy trong Docker
+
+```bash
+cp .env.example .env          # điền token FB (+ YouTube/TikTok nếu cross-post)
+docker compose up -d --build
+docker compose logs -f
+docker compose exec reels python3 src/doctor.py --online
+```
+
+Container cài sẵn FFmpeg, chạy `doctor.py` lúc khởi động (đặt `DOCTOR_STRICT=1` để dừng nếu có `[fail]`)
+rồi vào lịch bằng `src/scheduler.py` — không cần cron của host. Đổi giờ bằng `SCHEDULE_HOUR`/
+`SCHEDULE_MINUTE` (UTC). `assets/`, `data/`, `logs/` được mount từ host nên build lại image không mất dữ liệu.
+
+Lịch khác (ví dụ dọn file mỗi tuần) thì đổi `SCHEDULE_COMMAND`:
+
+```bash
+SCHEDULE_COMMAND="python3 src/cleanup.py --apply" SCHEDULE_HOUR=3 docker compose up -d
+```
+
 ## Test
 
 ```bash
@@ -246,6 +312,11 @@ ruff check src tests
 | Sửa lời thoại mà audio không đổi | Không còn xảy ra: file cache có hash. Kiểm tra `assets/voice/` xem có file hash mới không. |
 | Video dùng nhạc/nền giả | `assets/music/` hoặc `assets/footage/` trống nên pipeline tự sinh placeholder — `doctor.py` cảnh báo. |
 | `Clip ... trùng nội dung với bài đã đăng` | Chống trùng đang chặn; sửa nội dung cho khác, hoặc `--force`, hoặc hạ `content.duplicate_similarity`. |
+| Cross-post lỗi nhưng Reel đã lên | Đúng thiết kế: lỗi từng nền tảng chỉ được ghi lại. Xem dòng `crosspost <nền tảng>: LỖI ...` hoặc `doctor.py` để biết thiếu credential nào. |
+| YouTube trả `308` | File quá lớn cho upload 1 request (giới hạn ~64MB) — Shorts thường không gặp. |
+| TikTok chỉ đăng ở chế độ riêng tư | App chưa được TikTok duyệt; đặt `TIKTOK_PRIVACY_LEVEL` cao hơn sẽ bị từ chối. |
+| Container không chạy lịch | Xem `docker compose logs`; lịch tính theo **giờ UTC** (`SCHEDULE_HOUR`), và `DOCTOR_STRICT=1` sẽ chặn container khi thiếu token. |
+| Muốn xoá file cũ cho nhẹ máy | `python3 src/cleanup.py` xem trước, `--apply` mới xoá; file của clip đang trong queue luôn được giữ. |
 
 ## Lưu ý
 

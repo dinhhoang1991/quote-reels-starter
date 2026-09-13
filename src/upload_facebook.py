@@ -182,9 +182,42 @@ def start_session(page_id: str, token: str, version: str, retries: int) -> tuple
     return str(video_id), str(upload_url)
 
 
-def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -> None:
+def request_file_with_retry(
+    method: str, url: str, file_path: Path, retries: int, headers: dict, timeout: int
+) -> requests.Response:
+    """Gửi file lên URL, mở lại file ở MỖI lần thử.
+
+    Mở file một lần ngoài vòng lặp là lỗi: lần thử lại sẽ đọc từ cuối file và gửi body rỗng.
+
+    @param method HTTP method (POST/PUT)
+    @param url đích upload
+    @param file_path file cần gửi
+    @param retries số lần thử tối đa
+    @param headers header cố định, gồm cả Content-Length nếu server cần
+    @param timeout timeout mỗi request (giây)
+    @returns response cuối cùng (đã thử lại các lỗi tạm)
+    """
     cfg = load_config()
     max_delay = float(cfg.facebook.get("retry_max_delay_seconds", DEFAULT_MAX_DELAY))
+    last: requests.Response | None = None
+    for attempt in range(retries):
+        with file_path.open("rb") as handle:
+            resp = requests.request(method, url, headers=headers, data=handle, timeout=timeout)
+        last = resp
+        for line in usage_headers(resp):
+            log(line)
+        if resp.status_code < 400:
+            return resp
+        if not is_transient(resp) or attempt == retries - 1:
+            return resp
+        delay = retry_delay(resp, attempt, max_delay)
+        log(f"upload tạm lỗi {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
+        time.sleep(delay)
+    assert last is not None
+    return last
+
+
+def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -> None:
     size = video_path.stat().st_size
     headers = {
         "Authorization": f"OAuth {token}",
@@ -192,23 +225,12 @@ def upload_binary(upload_url: str, token: str, video_path: Path, retries: int) -
         "file_size": str(size),
         "Content-Type": "application/octet-stream",
     }
-    last_err = None
-    for attempt in range(retries):
-        with video_path.open("rb") as fh:
-            resp = requests.post(upload_url, headers=headers, data=fh, timeout=600)
-        if resp.status_code < 400:
-            data = resp.json() if resp.content else {}
-            if data and data.get("success") is False:
-                raise SystemExit(f"Upload thất bại: {data}")
-            return
-        last_err = resp
-        if not is_transient(resp) or attempt == retries - 1:
-            raise api_error(resp)
-        delay = retry_delay(resp, attempt, max_delay)
-        log(f"upload tạm lỗi {resp.status_code}, thử lại sau {delay:.1f}s ({attempt + 1}/{retries})")
-        time.sleep(delay)
-    if last_err is not None:
-        raise api_error(last_err)
+    resp = request_file_with_retry("POST", upload_url, video_path, retries, headers, 600)
+    if resp.status_code >= 400:
+        raise api_error(resp)
+    data = resp.json() if resp.content else {}
+    if data and data.get("success") is False:
+        raise SystemExit(f"Upload thất bại: {data}")
 
 
 def wait_ready(video_id: str, token: str, version: str, timeout_s: int = 180) -> dict:
@@ -251,7 +273,13 @@ def finish_publish(
     state: str,
     scheduled_ts: int | None,
     retries: int,
+    thumb_offset_ms: int = 0,
 ) -> dict:
+    """Chốt phiên upload Reel.
+
+    @param thumb_offset_ms mốc (ms) lấy làm ảnh cover; 0 là để Meta tự chọn
+    @returns response của Graph
+    """
     url = f"https://graph.facebook.com/{version}/{page_id}/video_reels"
     payload = {
         "access_token": token,
@@ -261,17 +289,84 @@ def finish_publish(
         "description": description,
         "title": title,
     }
+    if thumb_offset_ms > 0:
+        payload["thumb_offset"] = int(thumb_offset_ms)
     if state == "SCHEDULED":
         if not scheduled_ts:
             raise SystemExit("SCHEDULED cần --at UNIX timestamp")
         payload["scheduled_publish_time"] = scheduled_ts
-        print("Cảnh báo: docs Reels API chính thức không liệt kê SCHEDULED — Graph có thể từ chối.")
+        log("cảnh báo: docs Reels API chính thức không liệt kê SCHEDULED — Graph có thể từ chối.")
     if state == "DRAFT":
-        print("Cảnh báo: docs Reels API chính thức nêu video_state=PUBLISHED. DRAFT có thể bị từ chối.")
+        log("cảnh báo: docs Reels API chính thức nêu video_state=PUBLISHED. DRAFT có thể bị từ chối.")
     resp = request_with_retry("POST", url, retries, data=payload, timeout=60)
     if resp.status_code >= 400:
         raise api_error(resp)
     return resp.json()
+
+
+class _SafeValues(dict):
+    """Thiếu placeholder thì thay bằng chuỗi rỗng thay vì ném KeyError."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def render_template(template: str, values: dict[str, str]) -> str:
+    """Điền placeholder `{ten}` trong template, thiếu giá trị thì bỏ trống.
+
+    @param template chuỗi có placeholder
+    @param values giá trị thay thế
+    @returns chuỗi đã điền, khoảng trắng thừa đã gộp
+    """
+    return " ".join(str(template).format_map(_SafeValues(values)).split())
+
+
+def first_comment_text(clip: dict | None, cfg=None) -> str:
+    """Nội dung comment đầu tiên cho Reel.
+
+    Ưu tiên `first_comment` trong clip, sau đó tới template `facebook.first_comment`
+    (placeholder: title, footer, topic, caption). Rỗng = không đăng comment.
+
+    @param clip clip đã validate, có thể None
+    @param cfg config, mặc định đọc config.yaml
+    @returns nội dung comment, rỗng nếu tắt
+    """
+    cfg = cfg or load_config()
+    direct = str((clip or {}).get("first_comment") or "").strip()
+    if direct:
+        return direct
+    template = str((cfg.get("facebook", {}) or {}).get("first_comment", "") or "").strip()
+    if not template:
+        return ""
+    return render_template(
+        template,
+        {
+            "title": " ".join(str((clip or {}).get("title", "")).split()),
+            "footer": str((clip or {}).get("footer", "")),
+            "topic": str((clip or {}).get("topic", "")),
+            "caption": str((clip or {}).get("caption", "")),
+        },
+    )
+
+
+def post_first_comment(
+    video_id: str, token: str, version: str, message: str, retries: int
+) -> dict:
+    """Đăng comment đầu tiên dưới Reel (Page tự comment).
+
+    @param video_id id video vừa publish
+    @param message nội dung comment
+    @param retries số lần thử khi lỗi tạm
+    @returns response của Graph
+    """
+    url = f"https://graph.facebook.com/{version}/{video_id}/comments"
+    resp = request_with_retry(
+        "POST", url, retries, data={"message": message, "access_token": token}, timeout=60
+    )
+    if resp.status_code >= 400:
+        raise api_error(resp)
+    return resp.json()
+
 
 
 def caption_from_json(data: dict, extra_tags: str) -> str:
@@ -297,12 +392,14 @@ def upload_reel(
     clip_id: str = "",
     force: bool = False,
     clip: dict | None = None,
+    first_comment: str | None = None,
 ) -> dict:
     """Đăng 1 video lên Page dưới dạng Reel.
 
     @param clip_id id clip để chống đăng trùng, rỗng thì bỏ qua log
     @param force đăng lại dù đã có trong log / trùng nội dung
     @param clip clip đã validate, dùng để lưu chữ ký nội dung + topic
+    @param first_comment None = lấy từ clip/config, "" = không đăng comment đầu
     @returns response của bước finish kèm video_id/reel_url
     """
     cfg = load_config()
@@ -322,11 +419,23 @@ def upload_reel(
     log("3) WAIT encode")
     wait_ready(video_id, token, version)
     log(f"4) FINISH state={state}")
+    thumb_offset = int((cfg.get("facebook", {}) or {}).get("thumb_offset_ms", 0) or 0)
     result = finish_publish(
-        page_id, token, version, video_id, description, title, state, scheduled_ts, retries
+        page_id, token, version, video_id, description, title, state, scheduled_ts, retries,
+        thumb_offset_ms=thumb_offset,
     )
     result["video_id"] = video_id
     result["reel_url"] = f"https://www.facebook.com/reel/{video_id}"
+    comment = first_comment_text(clip, cfg) if first_comment is None else first_comment
+    if state != "PUBLISHED":
+        comment = ""
+    if comment:
+        try:
+            result["first_comment"] = post_first_comment(video_id, token, version, comment, retries)
+            log("5) COMMENT đầu tiên: đã đăng")
+        except (SystemExit, Exception) as exc:  # Reel đã publish: comment lỗi không làm job fail
+            result["first_comment_error"] = str(exc)
+            log(f"cảnh báo: không đăng được comment đầu ({exc})")
     if clip_id:
         record_publish(
             clip_id,
@@ -350,6 +459,7 @@ def main() -> None:
     parser.add_argument("--state", default=os.getenv("FB_DEFAULT_STATE", "PUBLISHED"))
     parser.add_argument("--at", type=int, default=0, help="UNIX time nếu SCHEDULED")
     parser.add_argument("--force", action="store_true", help="Đăng lại clip đã có trong log")
+    parser.add_argument("--no-first-comment", action="store_true", help="Không đăng comment đầu")
     args = parser.parse_args()
 
     page_id = os.getenv("FB_PAGE_ID", "").strip()
@@ -389,6 +499,7 @@ def main() -> None:
         clip_id=clip_id,
         force=args.force,
         clip=data or None,
+        first_comment="" if args.no_first_comment else None,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

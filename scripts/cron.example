@@ -9,3 +9,8 @@ ROOT=/ABS/PATH/quote-reels-starter
 
 # 08:00 Chủ nhật: kiểm tra môi trường/asset/token, cảnh báo trước khi token ~60 ngày hết hạn
 0 8 * * 0 cd "$ROOT" && mkdir -p logs && /usr/bin/python3 src/doctor.py --online >> logs/doctor.log 2>&1
+
+# 03:00 ngày 1 hằng tháng: dọn file cũ (dry-run trước bằng cách bỏ --apply)
+0 3 1 * * cd "$ROOT" && mkdir -p logs && /usr/bin/python3 src/cleanup.py --apply >> logs/cleanup.log 2>&1
+
+# Nếu không dùng cron của host: chạy container `docker compose up -d` và để src/scheduler.py lo lịch.

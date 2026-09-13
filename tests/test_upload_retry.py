@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import upload_facebook as fb  # noqa: E402
+import upload_youtube as yt  # noqa: E402
 
 
 class FakeResponse:
@@ -156,7 +157,7 @@ class UploadBinaryTest(unittest.TestCase):
             video = Path(tmp) / "clip.mp4"
             video.write_bytes(b"x" * 1024)
             with mock.patch(
-                "upload_facebook.requests.post",
+                "upload_facebook.requests.request",
                 side_effect=[FakeResponse(500), FakeResponse(200, {"success": True})],
             ) as post, mock.patch("upload_facebook.time.sleep") as sleep:
                 fb.upload_binary("https://rupload.facebook.com/x", "token", video, 2)
@@ -168,10 +169,78 @@ class UploadBinaryTest(unittest.TestCase):
             video = Path(tmp) / "clip.mp4"
             video.write_bytes(b"x")
             with mock.patch(
-                "upload_facebook.requests.post", return_value=FakeResponse(403, graph_error(200))
+                "upload_facebook.requests.request", return_value=FakeResponse(403, graph_error(200))
             ) as post, self.assertRaises(SystemExit):
                 fb.upload_binary("https://rupload.facebook.com/x", "token", video, 3)
         self.assertEqual(post.call_count, 1)
+
+
+class RequestFileWithRetryTest(unittest.TestCase):
+    """Retry phải gửi lại ĐỦ nội dung file, không phải body rỗng."""
+
+    def test_moi_lan_thu_deu_doc_lai_file_tu_dau(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"y" * 4096)
+            sizes: list[int] = []
+
+            def fake_request(method, url, headers=None, data=None, timeout=None):
+                sizes.append(len(data.read()))
+                return FakeResponse(500) if len(sizes) == 1 else FakeResponse(200, {"success": True})
+
+            with (
+                mock.patch("upload_facebook.requests.request", side_effect=fake_request),
+                mock.patch("upload_facebook.time.sleep"),
+            ):
+                fb.request_file_with_retry(
+                    "PUT", "https://upload/session", video, 2, {"Content-Length": "4096"}, 60
+                )
+        self.assertEqual(sizes, [4096, 4096], "lần retry phải đọc lại file từ đầu")
+
+    def test_het_luot_thi_tra_response_cuoi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"z" * 10)
+            with (
+                mock.patch("upload_facebook.requests.request", return_value=FakeResponse(503)),
+                mock.patch("upload_facebook.time.sleep"),
+            ):
+                resp = fb.request_file_with_retry("PUT", "https://upload/session", video, 2, {}, 60)
+        self.assertEqual(resp.status_code, 503)
+
+    def test_loi_vinh_vien_tra_ngay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"z" * 10)
+            with mock.patch(
+                "upload_facebook.requests.request", return_value=FakeResponse(403, graph_error(200))
+            ) as request:
+                resp = fb.request_file_with_retry("PUT", "https://upload/session", video, 3, {}, 60)
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(request.call_count, 1)
+
+    def test_youtube_upload_dung_helper_chung(self):
+        """upload_bytes của YouTube phải đi qua helper mở lại file (bug đã sửa)."""
+        from config import Cfg
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"a" * 2048)
+            seen: list[int] = []
+
+            def fake_request(method, url, headers=None, data=None, timeout=None):
+                seen.append(len(data.read()))
+                return FakeResponse(500) if len(seen) == 1 else FakeResponse(200, {"id": "vid1"})
+
+            cfg = Cfg({"facebook": {"max_retries": 2, "retry_max_delay_seconds": 5}})
+            with (
+                mock.patch("upload_facebook.requests.request", side_effect=fake_request),
+                mock.patch("upload_facebook.time.sleep"),
+                mock.patch("upload_facebook.load_config", return_value=cfg),
+            ):
+                resource = yt.upload_bytes("https://upload/session", video, "at", 2)
+        self.assertEqual(resource["id"], "vid1")
+        self.assertEqual(seen, [2048, 2048])
 
 
 if __name__ == "__main__":

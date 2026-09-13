@@ -5,6 +5,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -18,6 +19,9 @@ except ModuleNotFoundError:  # Python 3.10
         tomllib = None  # type: ignore[assignment]
 
 import yaml  # noqa: E402
+
+# tham chiếu chính module này để patch ROOT/WORKFLOW_PATH trong test
+packaging = sys.modules[__name__]
 
 
 def requirement_entries(path: Path | None = None) -> list[str]:
@@ -66,10 +70,17 @@ class PyprojectTest(unittest.TestCase):
             self.assertIn("checkout", text, readme)
 
 
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+
+
 class WorkflowTest(unittest.TestCase):
     def setUp(self):
-        path = ROOT / ".github" / "workflows" / "ci.yml"
-        self.workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not WORKFLOW_PATH.is_file():
+            self.skipTest(
+                ".github/ không có trong artifact này (image deploy bỏ .github) — "
+                "bỏ qua kiểm tra cấu hình CI"
+            )
+        self.workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
     def test_ci_chay_unittest_va_ruff(self):
         steps = [
@@ -105,6 +116,32 @@ class WorkflowTest(unittest.TestCase):
         data = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
         ecosystems = {entry["package-ecosystem"] for entry in data["updates"]}
         self.assertIn("pip", ecosystems)
+
+
+class WorkflowMissingTest(unittest.TestCase):
+    """Image deploy không có .github/: các test metadata phải skip chứ không fail."""
+
+    def test_skip_khi_artifact_khong_co_workflow(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / ".github" / "workflows" / "ci.yml"
+            case = packaging.WorkflowTest("test_ci_chay_unittest_va_ruff")
+            with (
+                mock.patch.object(packaging, "ROOT", Path(tmp)),
+                mock.patch.object(packaging, "WORKFLOW_PATH", missing),
+                self.assertRaises(unittest.SkipTest) as ctx,
+            ):
+                case.setUp()
+        self.assertIn("image deploy", str(ctx.exception))
+
+    def test_dockerignore_bo_github_nhung_giu_tests(self):
+        lines = [
+            line.strip() for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        self.assertIn(".github", lines, "image cố ý bỏ .github → test CI phải skip")
+        self.assertNotIn("tests", lines, "CI chạy test suite trong container nên phải giữ tests/")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+# Bỏ khỏi image những thứ không cần để chạy pipeline
+.git
+.github
+.gitignore
+.venv
+.venv-review
+.venv-clean
+.review-artifacts
+.qrs-review
+__pycache__
+*.py[cod]
+.env
+logs/*
+assets/out/*
+assets/voice/*
+assets/overlays/*
+assets/footage/_placeholder.mp4
+assets/footage/_normalized
+assets/music/_placeholder.m4a
+data/published.json
+data/insights.json
+data/queue/pending/*
+data/queue/done/*
+data/queue/failed/*
+data/queue/.queue.lock

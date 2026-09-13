@@ -324,6 +324,55 @@ def check_content(cfg: Cfg) -> list[Check]:
     return checks
 
 
+def check_integrations(cfg: Cfg) -> list[Check]:
+    """Cross-post, cover và lịch chạy: cấu hình có hợp lệ và có đủ credential không."""
+    import os
+
+    from publish import resolve_targets
+
+    checks: list[Check] = []
+    try:
+        targets = resolve_targets(None, cfg)
+    except SystemExit as exc:
+        checks.append(Check(FAIL, "crosspost", str(exc.code)))
+        targets = []
+    if not targets:
+        checks.append(Check(OK, "crosspost", "đang tắt (crosspost.targets rỗng)"))
+    else:
+        checks.append(Check(OK, "crosspost", "đích: " + ", ".join(targets)))
+    required = {
+        "youtube": ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN"),
+        "tiktok": ("TIKTOK_ACCESS_TOKEN",),
+    }
+    for target in targets:
+        missing = [key for key in required[target] if not os.getenv(key, "").strip()]
+        checks.append(
+            Check(OK if not missing else FAIL, f"credential {target}",
+                  "đã có" if not missing else f"thiếu {', '.join(missing)} trong .env")
+        )
+
+    cover = cfg.get("cover", {}) or {}
+    at_seconds = float(cover.get("at_seconds") or 0)
+    where = f"{at_seconds:.1f}s" if at_seconds > 0 else "giữa đoạn hook"
+    checks.append(
+        Check(OK, "cover", f"{'bật' if cover.get('enabled', True) else 'tắt'}, lấy ở {where}")
+    )
+    schedule = cfg.get("schedule", {}) or {}
+    hour = int(schedule.get("hour", 7))
+    minute = int(schedule.get("minute", 0))
+    valid = 0 <= hour <= 23 and 0 <= minute <= 59
+    checks.append(
+        Check(OK if valid else FAIL, "schedule",
+              f"{hour:02d}:{minute:02d} UTC — {schedule.get('command', 'publish.py --queue')}")
+    )
+    keep_days = float((cfg.get("cleanup", {}) or {}).get("keep_days", 30))
+    checks.append(
+        Check(OK if keep_days > 0 else WARN, "cleanup",
+              f"giữ file {keep_days:.0f} ngày" + ("" if keep_days > 0 else " (đang tắt)"))
+    )
+    return checks
+
+
 def check_token(cfg: Cfg, online: bool) -> list[Check]:
     """Sự có mặt của .env/token, và khi --online thì hỏi Graph về hạn/quyền của token."""
     checks: list[Check] = []
@@ -388,6 +437,18 @@ def check_token(cfg: Cfg, online: bool) -> list[Check]:
     return checks
 
 
+def load_project_env() -> None:
+    """Nạp .env trước mọi check để credential (YouTube/TikTok/Facebook) đọc được.
+
+    Bỏ qua khi thiếu `requests`: `check_environment` đã báo lỗi đó rồi.
+    """
+    try:
+        from upload_facebook import load_env
+    except SystemExit:
+        return
+    load_env(ROOT / ".env")
+
+
 def run_all(json_path: Path | None = None, online: bool = False) -> list[Check]:
     """Chạy toàn bộ kiểm tra, gom lại thành 1 danh sách.
 
@@ -395,11 +456,13 @@ def run_all(json_path: Path | None = None, online: bool = False) -> list[Check]:
     @param online có gọi Graph debug_token hay không
     @returns danh sách Check theo thứ tự chạy
     """
+    load_project_env()
     cfg = load_config()
     checks = check_environment()
     checks += check_assets(cfg)
     checks += check_config(cfg)
     checks += check_content(cfg)
+    checks += check_integrations(cfg)
     checks += check_queue(cfg)
     checks += check_token(cfg, online)
     if json_path is not None:
