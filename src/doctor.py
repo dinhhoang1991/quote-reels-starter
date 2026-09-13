@@ -392,6 +392,13 @@ def check_integrations(cfg: Cfg) -> list[Check]:
               ", ".join(channels) + f" (mức tối thiểu {settings['min_level']})"
               if channels else "chưa cấu hình — lỗi publish sẽ im lặng")
     )
+    subtitles = cfg.get("subtitles", {}) or {}
+    checks.append(
+        Check(OK, "phụ đề",
+              f"{'bật' if subtitles.get('enabled', False) else 'tắt'}, "
+              f"{subtitles.get('words_per_cue', 3)} từ/dòng, "
+              f"karaoke {'bật' if subtitles.get('karaoke') else 'tắt'}")
+    )
     keep_days = float((cfg.get("cleanup", {}) or {}).get("keep_days", 30))
     checks.append(
         Check(OK if keep_days > 0 else WARN, "cleanup",

@@ -9,11 +9,11 @@ Pipeline:
 ```
 JSON list  →  PNG chữ (Pillow, hook 3s + full)
                  ↓
-        Voice (edge-tts) + footage + nhạc
+        Voice (edge-tts) + timing từng từ + footage + nhạc
                  ↓
-        FFmpeg 9:16 · AAC stereo 48 kHz · ducking · fade
+        FFmpeg 9:16 · phụ đề burn-in · AAC stereo 48 kHz · ducking · fade
                  ↓
-        Facebook Page Reels API (retry, quota 30/24h, chống trùng)
+        Facebook Page Reels API (+ YouTube/TikTok) — retry, quota, chống trùng
 ```
 
 ## Cài đặt
@@ -213,6 +213,19 @@ Metric lấy theo `insights.metrics` trong `config.yaml`; Graph có thể từ c
 video/quyền token nên script thử lại từng metric và ghi lại cái lỗi vào `metrics_failed`.
 Dùng `summary` để biết chủ đề nào đang hiệu quả rồi ưu tiên ở vòng xoay.
 
+## Phụ đề burn-in
+
+Phụ đề được đốt thẳng vào video từ **timing từng từ** của edge-tts (`WordBoundary`), nên chữ hiện
+đúng lúc đọc. Bật/tắt và chỉnh trong `config.yaml` (`subtitles.*`): số từ mỗi dòng, số ký tự tối đa,
+cắt theo khoảng lặng, cỡ chữ, màu, viền, `margin_v` (mặc định 470 — phải cao hơn footer của overlay),
+`karaoke: true` nếu muốn từ đã đọc được tô màu dần.
+
+- Timing lưu cạnh file mp3: `assets/voice/<id>.<hash>.mp3.words.json`.
+- Bản đọc ngoài edge-tts (Vbee/FPT truyền qua `--voice file.mp3`) **không có timing** nên phụ đề tự
+  bỏ qua kèm cảnh báo; đặt `subtitles.require_timings: false` nếu muốn vẫn render (không có phụ đề).
+- Mốc thời gian được dịch theo `audio.head_seconds` để khớp với voice đã bị đẩy trễ trong mix.
+- `scripts/smoke_render.py` kiểm cả phụ đề: render thật rồi đếm pixel trắng ở nửa dưới khung hình.
+
 ## Comment đầu tiên, ảnh cover
 
 Comment đầu (Page tự comment dưới Reel) lấy từ `first_comment` trong JSON clip, hoặc template
@@ -310,6 +323,10 @@ ruff check src tests
 | `OverlayFitError` | Tiêu đề/item quá dài — rút ngắn hoặc bớt item; xem trước bằng `doctor.py --json <file>`. |
 | Bản đọc bị cắt giữa câu | `voice_script` dài quá 90s; `doctor.py --json` cảnh báo trước khi gọi TTS. |
 | Sửa lời thoại mà audio không đổi | Không còn xảy ra: file cache có hash. Kiểm tra `assets/voice/` xem có file hash mới không. |
+| Phụ đề không hiện | Bản đọc không có timing (giọng ngoài edge-tts) — xem cảnh báo khi render; dùng giọng edge-tts hoặc chấp nhận không có phụ đề. |
+| Phụ đề sớm/muộn so với tiếng | Do `audio.head_seconds` đổi mà timing dịch theo; chỉnh `subtitles.margin_v`/kiểm lại `head_seconds`. |
+| Phụ đề đè lên footer | Tăng `subtitles.margin_v` (footer của overlay nằm ở 1496px, phụ đề phải kết thúc thấp hơn). |
+| `Thiếu subtitles` trong doctor | FFmpeg không có libass; cài bản ffmpeg đầy đủ hoặc đặt `subtitles.enabled: false`. |
 | Video dùng nhạc/nền giả | `assets/music/` hoặc `assets/footage/` trống nên pipeline tự sinh placeholder — `doctor.py` cảnh báo. |
 | `Clip ... trùng nội dung với bài đã đăng` | Chống trùng đang chặn; sửa nội dung cho khác, hoặc `--force`, hoặc hạ `content.duplicate_similarity`. |
 | Cross-post lỗi nhưng Reel đã lên | Đúng thiết kế: lỗi từng nền tảng chỉ được ghi lại. Xem dòng `crosspost <nền tảng>: LỖI ...` hoặc `doctor.py` để biết thiếu credential nào. |

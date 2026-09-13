@@ -182,9 +182,15 @@ def ffmpeg_gaps(cfg=None) -> tuple[list[str], list[str]]:
     """
     cfg = cfg or load_config()
     encoders, filters = ffmpeg_capabilities()
+    required_filters = list(REQUIRED_FILTERS)
+    optional_filters = list(OPTIONAL_FILTERS)
+    if bool((cfg.get("subtitles", {}) or {}).get("enabled", False)):
+        # bật phụ đề thì libass trở thành bắt buộc
+        required_filters += [name for name in optional_filters if name == "subtitles"]
+        optional_filters = [name for name in optional_filters if name != "subtitles"]
     missing_encoders = [name for name in REQUIRED_ENCODERS if name not in encoders]
-    missing_filters = [name for name in REQUIRED_FILTERS if name not in filters]
-    optional = [name for name in OPTIONAL_FILTERS if name not in filters]
+    missing_filters = [name for name in required_filters if name not in filters]
+    optional = [name for name in optional_filters if name not in filters]
     return missing_encoders + missing_filters, optional
 
 

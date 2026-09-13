@@ -94,6 +94,17 @@ posts (diacritics stripped, Jaccard similarity) and blocked above `content.dupli
   `src/upload_youtube.py` / `src/upload_tiktok.py`; they have **not** been run against the real
   APIs here (no approved app/account), only against a fake HTTP layer in the tests.
 
+## Burned-in subtitles
+
+Subtitles are burned from edge-tts **per-word timings** (`WordBoundary`), so text appears exactly when
+it is spoken. Tune `subtitles.*` in `config.yaml`: words per line, max characters, gap cut-off, font
+size, colours, outline, `margin_v` (default 470, above the overlay footer) and `karaoke: true` for a
+progressive highlight. Timings are stored next to the mp3 as `assets/voice/<id>.<hash>.mp3.words.json`;
+a voice file supplied by hand (Vbee/FPT) has no timings, so subtitles are skipped with a warning
+unless `subtitles.require_timings: false`. Timings are shifted by `audio.head_seconds` to line up with
+the delayed voice in the mix. `scripts/smoke_render.py` verifies burn-in by counting white pixels in the
+lower half of a real rendered frame.
+
 ## Docker
 
 ```bash

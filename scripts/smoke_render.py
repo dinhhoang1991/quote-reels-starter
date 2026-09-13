@@ -67,6 +67,60 @@ def make_inputs(work: Path, seconds: float) -> tuple[Path, Path, Path]:
     return voice, music, footage
 
 
+def write_fake_timings(voice: Path, seconds: float) -> Path:
+    """Ghi sidecar WordBoundary giả để nhánh phụ đề burn-in cũng được chạy trong CI.
+
+    Bản đọc của smoke test do ffmpeg sinh nên không có timing thật từ edge-tts.
+
+    @param voice file voice đã sinh
+    @param seconds độ dài bản đọc
+    @returns đường dẫn sidecar
+    """
+    from subtitles import ms_to_offset
+    from tts import timings_path
+
+    words = ["Kiểm", "tra", "phụ", "đề", "cháy", "trong", "CI", "nhé"]
+    step = seconds / len(words)
+    entries = [
+        {
+            "text": word,
+            "offset": ms_to_offset(int(index * step * 1000)),
+            "duration": ms_to_offset(int(step * 0.85 * 1000)),
+        }
+        for index, word in enumerate(words)
+    ]
+    path = timings_path(voice)
+    path.write_text(json.dumps({"words": entries}, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def subtitle_pixels(video: Path, at_seconds: float, lower_from: int) -> int:
+    """Đếm pixel gần trắng ở nửa dưới khung hình (chữ phụ đề).
+
+    @param video file mp4
+    @param at_seconds mốc lấy frame
+    @param lower_from dòng bắt đầu quét
+    @returns số pixel trắng tìm được
+    """
+    from PIL import Image
+
+    frame = video.parent / "subtitle-frame.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-ss", f"{at_seconds:.2f}", "-i", str(video),
+         "-frames:v", "1", str(frame)],
+        check=True, capture_output=True,
+    )
+    image = Image.open(frame).convert("RGB")
+    pixels = image.load()
+    count = 0
+    for y in range(lower_from, image.height, 2):
+        for x in range(0, image.width, 2):
+            red, green, blue = pixels[x, y]
+            if red > 230 and green > 230 and blue > 230:
+                count += 1
+    return count
+
+
 def check(name: str, ok: bool, detail: str) -> bool:
     print(f"  [{'ok' if ok else 'FAIL'}] {name}: {detail}")
     return ok
@@ -91,6 +145,8 @@ def main() -> None:
     clip_path = work / "clip.json"
     clip_path.write_text(json.dumps(CLIP, ensure_ascii=False), encoding="utf-8")
     voice, music, footage = make_inputs(work, args.seconds)
+    sidecar = write_fake_timings(voice, args.seconds)
+    print(f"timing giả cho phụ đề: {sidecar.name}")
 
     print("render:")
     out = build(clip_path, footage, music, voice)
@@ -124,9 +180,15 @@ def main() -> None:
               float(cfg.video.min_seconds) <= video_seconds <= float(cfg.video.max_seconds),
               f"{video_seconds:.2f}s trong {cfg.video.min_seconds}–{cfg.video.max_seconds}s"),
     ]
+    if bool((cfg.get("subtitles", {}) or {}).get("enabled", False)):
+        at = float(cfg.audio.head_seconds) + max(args.seconds * 0.5, 0.5)
+        white = subtitle_pixels(out, at, int(cfg.video.height) // 2)
+        results.append(check("phụ đề burn-in", white > 200, f"{white} pixel trắng ở nửa dưới"))
+        failed_names = ("file", "video", "fps", "audio", "duration", "a/v", "range", "subtitles")
+    else:
+        failed_names = ("file", "video", "fps", "audio", "duration", "a/v", "range")
 
-    names = ("file", "video", "fps", "audio", "duration", "a/v", "range")
-    failed = [name for name, ok in zip(names, results, strict=True) if not ok]
+    failed = [name for name, ok in zip(failed_names, results, strict=True) if not ok]
     if not args.keep:
         import shutil
 
