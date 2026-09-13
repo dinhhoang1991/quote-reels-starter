@@ -185,13 +185,20 @@ class CheckClipTest(unittest.TestCase):
 
 class RunAllTest(unittest.TestCase):
     def complete_environment(self):
-        """Giả lập máy có đủ ffmpeg/ffprobe để test không phụ thuộc máy chạy."""
-        return mock.patch.object(
-            doctor.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"
+        """Giả lập máy có đủ ffmpeg/ffprobe (kèm codec/filter) để test không phụ thuộc máy chạy."""
+        import checks
+
+        return mock.patch.multiple(
+            doctor.shutil, which=mock.Mock(side_effect=lambda name: f"/usr/bin/{name}")
+        ), mock.patch.object(
+            checks, "ffmpeg_capabilities",
+            return_value=(set(checks.REQUIRED_ENCODERS),
+                          set(checks.REQUIRED_FILTERS) | set(checks.OPTIONAL_FILTERS)),
         )
 
     def test_run_all_tren_repo_khong_co_fail(self):
-        with self.complete_environment():
+        which_patch, caps_patch = self.complete_environment()
+        with which_patch, caps_patch:
             checks = doctor.run_all(ROOT / "data" / "samples" / "clip_001.json")
         fails = levels(checks, doctor.FAIL)
         self.assertEqual([f"{check.name}: {check.detail}" for check in fails], [])
@@ -202,6 +209,22 @@ class RunAllTest(unittest.TestCase):
             checks = doctor.run_all(None)
         self.assertIn("ffmpeg", {check.name for check in levels(checks, doctor.FAIL)})
 
+    def test_ffmpeg_co_that_nhung_thieu_codec_thi_fail(self):
+        """ffmpeg chạy được nhưng thiếu libx264 thì phải báo fail, không crash."""
+        import checks as checks_module
+
+        which_patch = mock.patch.object(
+            doctor.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"
+        )
+        caps_patch = mock.patch.object(
+            checks_module, "ffmpeg_capabilities", return_value=(set(), set())
+        )
+        with which_patch, caps_patch:
+            found = doctor.run_all(None)
+        codec = [check for check in found if check.name == "ffmpeg codec/filter"]
+        self.assertEqual(codec[0].level, doctor.FAIL)
+        self.assertIn("libx264", codec[0].detail)
+
     def test_report_tra_1_khi_co_fail(self):
         self.assertEqual(doctor.report([doctor.Check(doctor.OK, "a"), doctor.Check(doctor.FAIL, "b")]), 1)
 
@@ -209,7 +232,8 @@ class RunAllTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             broken = Path(tmp) / "clip.json"
             broken.write_text("{khong-phai-json", encoding="utf-8")
-            with self.complete_environment():
+            which_patch, caps_patch = self.complete_environment()
+            with which_patch, caps_patch:
                 checks = doctor.run_all(broken)
         self.assertEqual(len(levels(checks, doctor.FAIL)), 1)
         self.assertEqual(levels(checks, doctor.FAIL)[0].name, "clip")

@@ -165,11 +165,19 @@ def parse_capabilities(blob: str) -> set[str]:
 def ffmpeg_capabilities() -> tuple[set[str], set[str]]:
     """Encoder và filter mà ffmpeg hiện có.
 
-    @returns (encoders, filters); rỗng nếu không chạy được ffmpeg
+    Không chạy được ffmpeg (thiếu binary, symlink hỏng, không có quyền) thì trả tập rỗng
+    để doctor báo thiếu chứ không crash.
+
+    @returns (encoders, filters)
     """
     result: list[set[str]] = []
     for flag in ("-encoders", "-filters"):
-        proc = subprocess.run(["ffmpeg", "-hide_banner", flag], capture_output=True, text=True)
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-hide_banner", flag], capture_output=True, text=True
+            )
+        except OSError:
+            return set(), set()
         result.append(parse_capabilities(f"{proc.stderr or ''}{proc.stdout or ''}"))
     return result[0], result[1]
 
