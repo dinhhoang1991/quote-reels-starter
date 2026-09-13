@@ -227,7 +227,10 @@ Dùng `summary` để biết chủ đề nào đang hiệu quả rồi ưu tiên
 Phụ đề được đốt thẳng vào video từ **timing từng từ** của edge-tts (`WordBoundary`), nên chữ hiện
 đúng lúc đọc. Bật/tắt và chỉnh trong `config.yaml` (`subtitles.*`): số từ mỗi dòng, số ký tự tối đa,
 cắt theo khoảng lặng, cỡ chữ, màu, viền, `margin_v` (mặc định 470 — phải cao hơn footer của overlay),
-`karaoke: true` nếu muốn từ đã đọc được tô màu dần.
+`overlay_gap` (khe hở 16px giữa item cuối và dải phụ đề), `karaoke: true` nếu muốn từ đã đọc được tô màu dần.
+
+- Khi `enabled: true`, overlay tự dừng trước dải phụ đề (`chiều cao - margin_v - font_size -
+  overlay_gap`) nên danh sách 8-10 item không bị phụ đề vẽ đè; tắt phụ đề thì overlay lấy lại phần đất đó.
 
 - Timing lưu cạnh file mp3: `assets/voice/<id>.<hash>.mp3.words.json`.
 - Bản đọc ngoài edge-tts (Vbee/FPT truyền qua `--voice file.mp3`) **không có timing** nên phụ đề tự
@@ -341,7 +344,7 @@ ruff check src tests
 | Sửa lời thoại mà audio không đổi | Không còn xảy ra: file cache có hash. Kiểm tra `assets/voice/` xem có file hash mới không. |
 | Phụ đề không hiện | Bản đọc không có timing (giọng ngoài edge-tts) — xem cảnh báo khi render; dùng giọng edge-tts hoặc chấp nhận không có phụ đề. |
 | Phụ đề sớm/muộn so với tiếng | Do `audio.head_seconds` đổi mà timing dịch theo; chỉnh `subtitles.margin_v`/kiểm lại `head_seconds`. |
-| Phụ đề đè lên footer | Tăng `subtitles.margin_v` (footer của overlay nằm ở 1496px, phụ đề phải kết thúc thấp hơn). |
+| Phụ đề đè lên item cuối của overlay | Không còn xảy ra: overlay tự chừa dải phụ đề + `subtitles.overlay_gap`. Nếu vẫn chạm, tăng `overlay_gap` hoặc giảm `margin_v`. |
 | `Thiếu subtitles` trong doctor | FFmpeg không có libass; cài bản ffmpeg đầy đủ hoặc đặt `subtitles.enabled: false`. |
 | Video dùng nhạc/nền giả | `assets/music/` hoặc `assets/footage/` trống nên pipeline tự sinh placeholder — `doctor.py` cảnh báo. |
 | `Clip ... trùng nội dung với bài đã đăng` | Chống trùng đang chặn; sửa nội dung cho khác, hoặc `--force`, hoặc hạ `content.duplicate_similarity`. |

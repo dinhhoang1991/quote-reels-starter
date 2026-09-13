@@ -29,8 +29,36 @@ DEFAULT_STYLE: dict[str, object] = {
     "hold_ms": 120,
     "margin_v": 420,
     "margin_h": 60,
+    "overlay_gap": 16,
     "alignment": 2,
 }
+
+
+def band(merged: dict, height: int) -> tuple[int, int, int]:
+    """Kích thước dải phụ đề từ style đã merge mặc định.
+
+    @param merged style đã áp DEFAULT_STYLE
+    @param height chiều cao khung hình
+    @returns (cỡ chữ, margin_v, khe hở với overlay)
+    """
+    font_size = int(merged["font_size"])
+    margin_v = int(merged["margin_v"]) if merged.get("margin_v") else int(height * 0.22)
+    gap = max(int(merged.get("overlay_gap", 0) or 0), 0)
+    return font_size, margin_v, gap
+
+
+def overlay_limit(style: dict | None, height: int) -> int:
+    """Mốc y thấp nhất mà chữ overlay được vẽ tới khi phụ đề bật.
+
+    Phụ đề nằm ở dải `height - margin_v - font_size … height - margin_v`, cộng khe hở
+    `overlay_gap`. Chừa dải này để item cuối của overlay không bị phụ đề vẽ đè lên.
+
+    @param style tuỳ chọn phụ đề (đọc font_size, margin_v, overlay_gap)
+    @param height chiều cao khung hình
+    @returns mốc y (px)
+    """
+    font_size, margin_v, gap = band({**DEFAULT_STYLE, **(style or {})}, height)
+    return int(height) - margin_v - font_size - gap
 
 
 @dataclass
@@ -222,8 +250,7 @@ def ass_style_line(style: dict, width: int, height: int) -> str:
     @returns dòng `Style: ...`
     """
     merged = {**DEFAULT_STYLE, **(style or {})}
-    font_size = int(merged["font_size"])
-    margin_v = int(merged["margin_v"]) if merged.get("margin_v") else int(height * 0.22)
+    font_size, margin_v, _ = band(merged, height)
     margin_h = int(merged["margin_h"])
     bold = -1 if merged.get("bold", True) else 0
     fields = [

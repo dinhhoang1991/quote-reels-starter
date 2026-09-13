@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from config import load_config, resolve_path
 from schema import content_warnings, load_clip, validate_clip
+from subtitles import overlay_limit
 
 MIN_TITLE_SIZE = 34
 MIN_BODY_SIZE = 26
@@ -29,6 +30,26 @@ HINT_SIZE = 32
 
 class OverlayFitError(ValueError):
     """Nội dung không vừa safe zone dù đã co chữ tới cỡ nhỏ nhất."""
+
+
+def content_bottom_limit(footer_y: int, height: int, cfg=None) -> int:
+    """Mốc y thấp nhất cho chữ overlay (tiêu đề + item).
+
+    Mặc định là trên vạch footer; khi bật phụ đề burn-in thì phải dừng cao hơn dải
+    phụ đề, nếu không item cuối (8-10 item chữ dài) sẽ bị phụ đề vẽ đè lên.
+
+    @param footer_y mốc của dòng footer
+    @param height chiều cao khung hình
+    @param cfg config, mặc định đọc config.yaml
+    @returns mốc y (px)
+    """
+    cfg = cfg or load_config()
+    limit = footer_y - 24
+    section = cfg.get("subtitles", {}) or {}
+    if not section.get("enabled", False):
+        return limit
+    style = section.as_dict() if hasattr(section, "as_dict") else dict(section)
+    return min(limit, overlay_limit(style, height))
 
 
 def hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -128,6 +149,19 @@ def fit_title(
         f"tiêu đề chiếm {last_h:.0f}px / {len(last_lines)} dòng, chỉ còn {max_height:.0f}px "
         f"ở cỡ chữ nhỏ nhất ({MIN_TITLE_SIZE}px)"
     )
+
+
+def drawn_title_height(lines: list[str], line_h: int) -> float:
+    """Chiều cao tiêu đề khi vẽ thật.
+
+    `fit_title` trả tổng chiều cao chưa gồm khe sau dòng cuối, còn vòng vẽ thì cộng
+    khe cho từng dòng — dùng hàm này để ngân sách không hụt vài px.
+
+    @param lines các dòng tiêu đề
+    @param line_h chiều cao một dòng
+    @returns chiều cao (px)
+    """
+    return len(lines) * (line_h + TITLE_LINE_GAP)
 
 
 def layout_items(
@@ -238,16 +272,27 @@ def render_overlay(data: dict, fonts_dir: Path, out_path: Path, mode: str = "ful
     max_text_width = width - 2 * margin_x - 24
     title_top = panel_top + 48
     items = data.get("items", [])
+    usable_bottom = content_bottom_limit(footer_y, height, cfg)
     if mode == "hook":
         # Chừa chỗ cho dòng "N ĐIỀU" ở giữa panel.
         title_max_h = max((panel_top + panel_bottom) // 2 - 20 - title_top, 120)
     else:
         # Chừa đúng chỗ danh sách cần ở cỡ chữ nhỏ nhất để items luôn còn đất.
         body_min_h = min_items_height(draw, items, body_font_path, max_text_width)
-        title_max_h = max(footer_y - 24 - title_top - body_min_h - 20, 120)
+        title_max_h = max(usable_bottom - title_top - body_min_h - 20, 120)
     title_font, title_lines, title_line_h, _ = fit_title(
         draw, data["title"], title_font_path, max_text_width, title_max_h, title_start
     )
+    if mode != "hook":
+        # Cấn lại ngân sách theo chiều cao vẽ thật (gồm khe giữa các dòng + 20px trước
+        # danh sách) để items không bị hụt vài px rồi báo lỗi oan.
+        over = (title_top + drawn_title_height(title_lines, title_line_h) + 20
+                + body_min_h - usable_bottom)
+        if over > 0:
+            title_max_h = max(title_max_h - over - 1, 120)
+            title_font, title_lines, title_line_h, _ = fit_title(
+                draw, data["title"], title_font_path, max_text_width, title_max_h, title_start
+            )
 
     y = title_top
     for line in title_lines:
@@ -281,7 +326,6 @@ def render_overlay(data: dict, fonts_dir: Path, out_path: Path, mode: str = "ful
         return out_path
 
     y += 20
-    usable_bottom = footer_y - 24
     remaining = usable_bottom - y
     if remaining <= 0:
         raise OverlayFitError(
