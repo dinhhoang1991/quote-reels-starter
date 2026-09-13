@@ -388,6 +388,7 @@ def upload_reel(
     scheduled_ts: int | None = None,
     clip_id: str = "",
     force: bool = False,
+    dry_run: bool = False,
     clip: dict | None = None,
     first_comment: str | None = None,
 ) -> dict:
@@ -395,9 +396,10 @@ def upload_reel(
 
     @param clip_id id clip để chống đăng trùng, rỗng thì bỏ qua log
     @param force đăng lại dù đã có trong log / trùng nội dung
+    @param dry_run chỉ kiểm tra + in kế hoạch request, không gọi mạng
     @param clip clip đã validate, dùng để lưu chữ ký nội dung + topic
     @param first_comment None = lấy từ clip/config, "" = không đăng comment đầu
-    @returns response của bước finish kèm video_id/reel_url
+    @returns response của bước finish kèm video_id/reel_url (hoặc kế hoạch khi dry_run)
     """
     cfg = load_config()
     retries = int(cfg.facebook.max_retries)
@@ -408,6 +410,35 @@ def upload_reel(
     if clip_id:
         assert_can_publish(clip_id, force=force, data=clip)
     log(f"Quota còn {remaining_quota()}/{cfg.facebook.daily_limit} trong 24h")
+    thumb_offset = int((cfg.get("facebook", {}) or {}).get("thumb_offset_ms", 0) or 0)
+    comment = first_comment_text(clip, cfg) if first_comment is None else first_comment
+    if state != "PUBLISHED":
+        comment = ""
+    if dry_run:
+        plan = {
+            "target": "facebook",
+            "dry_run": True,
+            "endpoint": f"https://graph.facebook.com/{version}/{page_id or '{FB_PAGE_ID}'}"
+                        "/video_reels",
+            "phases": ["start", "upload", "wait_ready", "finish"],
+            "video": str(video_path),
+            "video_bytes": video_path.stat().st_size if video_path.exists() else 0,
+            "duration": round(duration, 2),
+            "state": state,
+            "scheduled_ts": scheduled_ts,
+            "title": title,
+            "caption": description,
+            "caption_chars": len(description),
+            "thumb_offset_ms": thumb_offset,
+            "first_comment": comment,
+            "quota_remaining": remaining_quota(),
+            "has_page_id": bool(page_id),
+            "has_token": bool(token),
+        }
+        log(f"[dry-run] không gọi mạng: {plan['video_bytes']} byte, {plan['duration']:.2f}s, "
+            f"state={state}, caption {plan['caption_chars']} ký tự"
+            + (f", comment đầu {len(comment)} ký tự" if comment else ", không comment đầu"))
+        return plan
     log("1) START session")
     video_id, upload_url = start_session(page_id, token, version, retries)
     log(f"   video_id={video_id}")
@@ -416,16 +447,12 @@ def upload_reel(
     log("3) WAIT encode")
     wait_ready(video_id, token, version)
     log(f"4) FINISH state={state}")
-    thumb_offset = int((cfg.get("facebook", {}) or {}).get("thumb_offset_ms", 0) or 0)
     result = finish_publish(
         page_id, token, version, video_id, description, title, state, scheduled_ts, retries,
         thumb_offset_ms=thumb_offset,
     )
     result["video_id"] = video_id
     result["reel_url"] = f"https://www.facebook.com/reel/{video_id}"
-    comment = first_comment_text(clip, cfg) if first_comment is None else first_comment
-    if state != "PUBLISHED":
-        comment = ""
     if comment:
         try:
             result["first_comment"] = post_first_comment(video_id, token, version, comment, retries)
@@ -456,6 +483,8 @@ def main() -> None:
     parser.add_argument("--state", default=os.getenv("FB_DEFAULT_STATE", "PUBLISHED"))
     parser.add_argument("--at", type=int, default=0, help="UNIX time nếu SCHEDULED")
     parser.add_argument("--force", action="store_true", help="Đăng lại clip đã có trong log")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="In kế hoạch request, không gọi mạng (không cần token)")
     parser.add_argument("--no-first-comment", action="store_true", help="Không đăng comment đầu")
     args = parser.parse_args()
 
@@ -463,7 +492,7 @@ def main() -> None:
     token = os.getenv("FB_PAGE_ACCESS_TOKEN", "").strip()
     version = os.getenv("FB_API_VERSION", cfg.facebook.api_version).strip() or DEFAULT_VERSION
     tags = os.getenv("DEFAULT_HASHTAGS", "").strip()
-    if not page_id or not token:
+    if not args.dry_run and (not page_id or not token):
         raise SystemExit("Thiếu FB_PAGE_ID hoặc FB_PAGE_ACCESS_TOKEN. Copy .env.example thành .env")
 
     video_path = Path(args.video)
@@ -495,6 +524,7 @@ def main() -> None:
         scheduled_ts=args.at or None,
         clip_id=clip_id,
         force=args.force,
+        dry_run=args.dry_run,
         clip=data or None,
         first_comment="" if args.no_first_comment else None,
     )

@@ -328,6 +328,11 @@ pip install -r requirements-dev.txt
 ruff check src tests
 ```
 
+## Chạy thật lần đầu
+
+Checklist từng bước cho lần đầu đăng bằng tài khoản thật — điền `.env` → `doctor --online` →
+diễn tập `--dry-run` → đăng 1 clip → kiểm comment/cover/hạn mức: xem [RUNBOOK.md](RUNBOOK.md).
+
 ## Xử lý sự cố
 
 | Hiện tượng | Cách xử lý |

@@ -69,7 +69,8 @@ def make_clip_cover(video: Path, data: dict) -> Path | None:
 
 
 def crosspost(
-    video: Path, data: dict, targets: list[str], cover: Path | None, caption: str, force: bool = False
+    video: Path, data: dict, targets: list[str], cover: Path | None, caption: str,
+    force: bool = False, dry_run: bool = False,
 ) -> dict[str, dict]:
     """Đăng thêm lên các nền tảng khác; lỗi từng nền tảng chỉ được ghi lại.
 
@@ -82,6 +83,7 @@ def crosspost(
     @param cover ảnh cover, có thể None
     @param caption caption dùng làm mô tả
     @param force đăng lại dù đã cross-post trước đó
+    @param dry_run chỉ in kế hoạch request của từng nền tảng, không gọi mạng
     @returns {target: kết quả hoặc {"error": ...}}
     """
     cfg = load_config()
@@ -96,7 +98,7 @@ def crosspost(
 
                 result = upload_youtube(
                     video, data, caption=caption, tags=tags, cover=cover,
-                    clip_id=clip_id, force=force,
+                    clip_id=clip_id, force=force, dry_run=dry_run,
                 )
             elif target == "tiktok":
                 from upload_tiktok import upload_clip as upload_tiktok
@@ -105,13 +107,16 @@ def crosspost(
                     video,
                     str(data.get("tiktok_caption") or caption or data.get("title", "")),
                     cover_timestamp_ms=cover_ms, clip_id=clip_id, force=force,
+                    dry_run=dry_run,
                 )
             else:
                 result = {"error": f"nền tảng lạ: {target}"}
         except (SystemExit, Exception) as exc:
             result = {"error": str(exc)}
         results[target] = result
-        if result.get("error"):
+        if result.get("dry_run"):
+            log(f"crosspost {target}: [dry-run] {result.get('url', '')}")
+        elif result.get("error"):
             log(f"crosspost {target}: LỖI {result['error']}")
         elif result.get("skipped"):
             log(f"crosspost {target}: bỏ qua ({result.get('reason', 'đã đăng')})")
@@ -141,11 +146,13 @@ def publish_one(
     force: bool,
     crosspost_targets: list[str] | None = None,
     no_first_comment: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Render rồi đăng 1 clip; tuỳ chọn đăng thêm nền tảng khác.
 
     @param crosspost_targets nền tảng đăng thêm ('youtube'/'tiktok'), rỗng là chỉ Facebook
     @param no_first_comment bỏ qua comment đầu tiên
+    @param dry_run render thật rồi in kế hoạch request của Facebook + cross-post, không gọi mạng
     """
     load_env(ROOT / ".env")
     data = load_clip(json_path)
@@ -158,12 +165,33 @@ def publish_one(
     token = os.getenv("FB_PAGE_ACCESS_TOKEN", "").strip()
     version = os.getenv("FB_API_VERSION", "v26.0")
     tags = os.getenv("DEFAULT_HASHTAGS", "")
-    if not page_id or not token:
+    if not dry_run and (not page_id or not token):
         raise SystemExit("Đã render xong nhưng chưa có token. Điền .env rồi chạy src/upload_facebook.py")
 
     log(f"quota còn {remaining_quota()} Reels trong 24h")
     title = " ".join(data.get("title", "").split())
     caption = caption_from_json(data, tags)
+    if dry_run:
+        plan = {
+            "dry_run": True,
+            "clip": data["id"],
+            "video": str(video),
+            "facebook": upload_reel(
+                video, page_id, token, caption, title, state.upper(), version,
+                clip_id=data["id"], force=force, dry_run=True, clip=data,
+                first_comment="" if no_first_comment else None,
+            ),
+        }
+        if crosspost_targets and state.upper() == "PUBLISHED":
+            cover = make_clip_cover(video, data)
+            plan["cover"] = str(cover) if cover else ""
+            plan["crosspost"] = crosspost(
+                video, data, crosspost_targets, cover, caption, force=force, dry_run=True,
+            )
+        log("[dry-run] không gọi mạng — không upload, không đổi hàng chờ")
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return
+
     result = upload_reel(
         video,
         page_id,
@@ -198,6 +226,7 @@ def publish_clip(json_path: Path, args, targets: list[str], from_queue: bool) ->
     @param from_queue True nếu clip lấy từ pending/ (lỗi thì move sang failed/)
     @returns (thành công?, mô tả lỗi)
     """
+    dry_run = bool(getattr(args, "dry_run", False))
     try:
         publish_one(
             json_path,
@@ -209,17 +238,21 @@ def publish_clip(json_path: Path, args, targets: list[str], from_queue: bool) ->
             args.force,
             crosspost_targets=targets,
             no_first_comment=args.no_first_comment,
+            dry_run=dry_run,
         )
     except (SystemExit, Exception) as exc:
         # Lỗi ffmpeg (CalledProcessError) không phải SystemExit: không bắt ở đây thì
         # job nằm mãi trong pending/ và cron lặp lại đúng clip lỗi mỗi ngày.
         error = describe_error(exc)
+        if dry_run:
+            # Diễn tập: không đổi hàng chờ, không gửi cảnh báo.
+            return False, error
         if from_queue:
             dest = queue_fail(json_path, error)
             log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
         notify_publish_failure(json_path.stem, error)
         return False, error
-    if from_queue:
+    if from_queue and not dry_run:
         dest = queue_move(json_path, "done")
         log(f"moved to {dest}")
     return True, ""
@@ -237,6 +270,11 @@ def run_batch(args, targets: list[str], cfg) -> int:
     @returns exit code (0 nếu mọi clip thành công)
     """
     limit = int(args.max)
+    dry_run = bool(getattr(args, "dry_run", False))
+    if dry_run and limit == 0:
+        # Diễn tập không di chuyển job khỏi pending/ nên vòng lặp sẽ lấy lại đúng clip đó.
+        limit = 1
+        log("dry-run: chỉ diễn tập 1 clip trong hàng chờ")
     done = failed = 0
     previous_error = ""
     attempts = 0
@@ -244,7 +282,8 @@ def run_batch(args, targets: list[str], cfg) -> int:
         json_path = next_pending()
         if json_path is None:
             if attempts == 0:
-                notify_empty_queue()
+                if not dry_run:
+                    notify_empty_queue()
                 raise SystemExit(
                     "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
                 )
@@ -260,7 +299,8 @@ def run_batch(args, targets: list[str], cfg) -> int:
         if error and error == previous_error:
             detail = f"lỗi lặp lại ({error}) — dừng batch sau {attempts} clip"
             log(detail)
-            notify(detail, level="error")
+            if not dry_run:
+                notify(detail, level="error")
             break
         previous_error = error
     log(f"batch: {done} thành công, {failed} lỗi")
@@ -276,6 +316,11 @@ def main() -> None:
     parser.add_argument("--voice", default="")
     parser.add_argument("--state", default=os.getenv("FB_DEFAULT_STATE", "PUBLISHED"))
     parser.add_argument("--skip-upload", action="store_true")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Render thật rồi in kế hoạch request Facebook + cross-post, không gọi mạng "
+             "(không cần token, không đổi hàng chờ)",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-first-comment", action="store_true", help="Không đăng comment đầu")
     parser.add_argument(
