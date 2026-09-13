@@ -103,6 +103,46 @@ def ken_burns_zoom_at(plan: dict[str, object], on: int) -> float:
     return float(plan["zoom_start"]) + float(plan["zoom_span"]) * progress
 
 
+def subtitles_enabled(cfg=None) -> bool:
+    """Phụ đề burn-in có bật trong config không."""
+    cfg = cfg or load_config()
+    return bool((cfg.get("subtitles", {}) or {}).get("enabled", False))
+
+
+def build_subtitles(data: dict, voice: Path | None, cfg=None) -> Path | None:
+    """Sinh file ASS từ timing của bản đọc.
+
+    Không có timing (ví dụ giọng Vbee/FPT truyền tay) thì bỏ qua và cảnh báo, trừ khi
+    `subtitles.require_timings: false`.
+
+    @param data clip đã validate
+    @param voice file mp3 đã dùng
+    @param cfg config, mặc định đọc config.yaml
+    @returns đường dẫn file .ass hoặc None nếu bỏ qua
+    """
+    cfg = cfg or load_config()
+    if not subtitles_enabled(cfg):
+        return None
+    from subtitles import build_cues, shift_words, words_from_timings, write_ass
+    from tts import load_timings
+
+    timings = load_timings(voice) if voice else []
+    section = cfg.get("subtitles", {}) or {}
+    if not timings and bool(section.get("require_timings", True)):
+        print("Cảnh báo: không có timing từng từ (bản đọc ngoài edge-tts) — bỏ qua phụ đề.")
+        return None
+    style = section.as_dict() if hasattr(section, "as_dict") else dict(section)
+    head_ms = int(float(cfg.audio.head_seconds) * 1000)
+    cues = build_cues(shift_words(words_from_timings(timings), head_ms), style)
+    if not cues:
+        print("Cảnh báo: không dựng được cue phụ đề nào — bỏ qua phụ đề.")
+        return None
+    out = resolve_path(cfg.paths.overlay_dir) / f"{data['id']}.ass"
+    write_ass(out, cues, style, int(cfg.video.width), int(cfg.video.height))
+    print(f"Phụ đề: {len(cues)} cue → {out.name}")
+    return out
+
+
 def background_filter(
     cfg, duration: float, fps: int, width: int, height: int, is_still: bool
 ) -> str:
@@ -266,7 +306,7 @@ def ensure_voice(data: dict, voice: Path | None) -> Path:
         if not voice.exists():
             raise SystemExit(f"Không thấy file giọng: {voice}")
         return voice
-    from tts import synth, voice_path
+    from tts import synth_with_timings, voice_path
 
     dest = voice_path(data, cfg)
     if dest.exists():
@@ -275,7 +315,7 @@ def ensure_voice(data: dict, voice: Path | None) -> Path:
     import asyncio
 
     asyncio.run(
-        synth(data["voice_script"], dest, cfg.audio.voice_name, cfg.audio.voice_rate)
+        synth_with_timings(data["voice_script"], dest, cfg.audio.voice_name, cfg.audio.voice_rate)
     )
     return dest
 
@@ -341,11 +381,19 @@ def build(
     gop = int(cfg.video.gop)
     crf = int(cfg.video.crf)
 
+    ass_path = build_subtitles(data, voice, cfg)
+    subtitle_chain = ""
+    if ass_path is not None:
+        from subtitles import subtitles_filter
+
+        subtitle_chain = "," + subtitles_filter(ass_path, fonts_dir)
+
     filter_complex = (
         background_filter(cfg, duration, fps, width, height, is_still)
         + f"[bg][3:v]overlay=0:0:enable='lt(t,{hook_s:.2f})':format=auto[v1];"
-        + f"[v1][4:v]overlay=0:0:enable='gte(t,{hook_s:.2f})':format=auto,"
-        + f"fade=t=out:st={fade_out_start:.2f}:d=0.45[v];"
+        + f"[v1][4:v]overlay=0:0:enable='gte(t,{hook_s:.2f})':format=auto"
+        + subtitle_chain
+        + f",fade=t=out:st={fade_out_start:.2f}:d=0.45[v];"
         + audio_filter(cfg, duration, fade_out_start)
     )
 

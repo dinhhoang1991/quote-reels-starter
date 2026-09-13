@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 
 from config import load_config, root
-from logutil import log
+from logutil import already_crossposted, crosspost_state, log, record_publish
 from schema import load_clip
 from upload_facebook import api_error, request_with_retry
 
@@ -190,6 +190,8 @@ def upload_clip(
     privacy_level: str | None = None,
     cover_timestamp_ms: int = 0,
     dry_run: bool = False,
+    clip_id: str = "",
+    force: bool = False,
 ) -> dict:
     """Đăng video lên TikTok.
 
@@ -198,6 +200,8 @@ def upload_clip(
     @param privacy_level ghi đè TIKTOK_PRIVACY_LEVEL
     @param cover_timestamp_ms mốc ảnh cover (ms)
     @param dry_run chỉ in request, không gọi mạng
+    @param clip_id id clip để chống đăng trùng, rỗng thì bỏ qua log
+    @param force đăng lại dù đã có trong log
     @returns dict kết quả
     """
     cfg = load_config()
@@ -213,6 +217,17 @@ def upload_clip(
             "payload": payload,
             "video_bytes": size,
         }
+    if clip_id and not force:
+        previous = already_crossposted(clip_id, "tiktok")
+        if previous:
+            log(f"TikTok: {clip_id} đã đăng lúc {previous.get('iso')} — bỏ qua "
+                f"(dùng --force nếu muốn đăng lại)")
+            return {
+                "target": "tiktok",
+                "skipped": True,
+                "reason": "đã cross-post trước đó",
+                "publish_id": str(previous.get("video_id", "")),
+            }
     token = env["access_token"]
     if not token:
         raise SystemExit("Thiếu TIKTOK_ACCESS_TOKEN trong .env")
@@ -231,6 +246,10 @@ def upload_clip(
     except (SystemExit, Exception) as exc:
         result["status_error"] = str(exc)
         log(f"cảnh báo: không đọc được trạng thái TikTok ({exc})")
+    if clip_id:
+        record_publish(
+            clip_id, publish_id, crosspost_state("tiktok"), "", {"target": "tiktok"}
+        )
     return result
 
 
@@ -245,6 +264,7 @@ def main() -> None:
     parser.add_argument("--cover-ms", type=int, default=int((cfg.get("cover", {}) or {}).get(
         "tiktok_cover_ms", 0) or 0))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Đăng lại dù đã có trong log")
     args = parser.parse_args()
 
     video = Path(args.video)
@@ -255,6 +275,7 @@ def main() -> None:
     result = upload_clip(
         video, title, privacy_level=args.privacy or None,
         cover_timestamp_ms=args.cover_ms, dry_run=args.dry_run,
+        clip_id=str(data.get("id", "")), force=args.force,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

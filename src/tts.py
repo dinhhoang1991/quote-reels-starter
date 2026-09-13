@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 
 from config import Cfg, load_config, resolve_path, root
@@ -58,6 +59,80 @@ async def synth(text: str, out_path: Path, voice: str, rate: str) -> Path:
     communicate = edge_tts.Communicate(text, voice=voice, rate=rate)
     await communicate.save(str(out_path))
     return out_path
+
+
+def timings_path(voice_path: Path) -> Path:
+    """File sidecar chứa timing từng từ của một bản đọc.
+
+    @param voice_path file mp3
+    @returns đường dẫn `<mp3>.words.json`
+    """
+    return voice_path.with_suffix(f"{voice_path.suffix}.words.json")
+
+
+def load_timings(voice_path: Path) -> list[dict]:
+    """Đọc timing từ sidecar, trả [] nếu chưa có hoặc hỏng.
+
+    @param voice_path file mp3
+    @returns danh sách WordBoundary
+    """
+    path = timings_path(voice_path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return list(data.get("words") or []) if isinstance(data, dict) else []
+
+
+def save_timings(voice_path: Path, words: list[dict]) -> Path:
+    """Ghi timing từng từ cạnh file mp3.
+
+    @param voice_path file mp3
+    @param words danh sách WordBoundary
+    @returns đường dẫn sidecar
+    """
+    path = timings_path(voice_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"words": words}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+async def synth_with_timings(
+    text: str, out_path: Path, voice: str, rate: str
+) -> tuple[Path, list[dict]]:
+    """Đọc thành mp3 và thu luôn timing từng từ (WordBoundary).
+
+    @param text nội dung đọc
+    @param out_path file mp3 đầu ra
+    @param voice tên giọng Neural
+    @param rate tốc độ, ví dụ '-8%'
+    @returns (đường dẫn mp3, danh sách WordBoundary)
+    :raises SystemExit nếu chưa cài edge-tts
+    """
+    try:
+        import edge_tts
+    except ImportError as exc:
+        raise SystemExit("Chưa cài edge-tts. Chạy: pip install edge-tts") from exc
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    communicate = edge_tts.Communicate(text, voice=voice, rate=rate, boundary="WordBoundary")
+    words: list[dict] = []
+    with out_path.open("wb") as handle:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                handle.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                words.append({
+                    "text": chunk["text"],
+                    "offset": int(chunk["offset"]),
+                    "duration": int(chunk["duration"]),
+                })
+    save_timings(out_path, words)
+    return out_path, words
 
 
 def synth_clip(data: dict, out_path: Path | None = None) -> Path:

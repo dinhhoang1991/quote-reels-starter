@@ -46,6 +46,18 @@ jobs:
       - name: Preflight phải sạch fail
         run: python src/doctor.py --json data/samples/clip_001.json
 
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Smoke render (kiểm audio dài đúng bằng video)
+        run: python scripts/smoke_render.py --seconds 2
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -56,3 +68,5 @@ jobs:
         run: docker run --rm --entrypoint python3 quote-reels-starter:ci src/doctor.py --json data/samples/clip_001.json
       - name: Test suite trong container
         run: docker run --rm --entrypoint python3 quote-reels-starter:ci -m unittest discover -s tests -t .
+      - name: Smoke render trong container
+        run: docker run --rm --entrypoint python3 quote-reels-starter:ci scripts/smoke_render.py --seconds 2

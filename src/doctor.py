@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from checks import estimate_voice_seconds
+from checks import estimate_voice_seconds, ffmpeg_gaps
 from config import Cfg, load_config, resolve_path, root
 from logutil import log
 from make_video import ken_burns_plan
@@ -79,6 +79,19 @@ def check_environment() -> list[Check]:
         )
     ffmpeg = shutil.which("ffmpeg")
     checks.append(Check(OK if ffmpeg else FAIL, "ffmpeg", ffmpeg or "thiếu, cài FFmpeg rồi chạy lại"))
+    if ffmpeg:
+        missing, optional_missing = ffmpeg_gaps()
+        checks.append(
+            Check(OK if not missing else FAIL, "ffmpeg codec/filter",
+                  "đủ libx264/aac/zoompan/sidechaincompress/loudnorm"
+                  if not missing else "thiếu " + ", ".join(sorted(missing)))
+        )
+        if optional_missing:
+            checks.append(
+                Check(WARN, "ffmpeg tuỳ chọn",
+                      "thiếu " + ", ".join(sorted(optional_missing))
+                      + " — chỉ cần khi bật phụ đề burn-in")
+            )
     ffprobe = shutil.which("ffprobe")
     checks.append(
         Check(OK if ffprobe else WARN, "ffprobe",
@@ -365,6 +378,27 @@ def check_integrations(cfg: Cfg) -> list[Check]:
         Check(OK if valid else FAIL, "schedule",
               f"{hour:02d}:{minute:02d} UTC — {schedule.get('command', 'publish.py --queue')}")
     )
+    from notify import load_notify_env
+
+    settings = load_notify_env(cfg)
+    channels = [
+        name for name, on in (
+            ("telegram", bool(settings["telegram_token"] and settings["telegram_chat_id"])),
+            ("webhook", bool(settings["webhook"])),
+        ) if on
+    ]
+    checks.append(
+        Check(OK if channels else WARN, "cảnh báo",
+              ", ".join(channels) + f" (mức tối thiểu {settings['min_level']})"
+              if channels else "chưa cấu hình — lỗi publish sẽ im lặng")
+    )
+    subtitles = cfg.get("subtitles", {}) or {}
+    checks.append(
+        Check(OK, "phụ đề",
+              f"{'bật' if subtitles.get('enabled', False) else 'tắt'}, "
+              f"{subtitles.get('words_per_cue', 3)} từ/dòng, "
+              f"karaoke {'bật' if subtitles.get('karaoke') else 'tắt'}")
+    )
     keep_days = float((cfg.get("cleanup", {}) or {}).get("keep_days", 30))
     checks.append(
         Check(OK if keep_days > 0 else WARN, "cleanup",
@@ -419,6 +453,10 @@ def check_token(cfg: Cfg, online: bool) -> list[Check]:
                   f"còn {days:.1f} ngày" + ("" if days > TOKEN_WARN_DAYS
                                             else " — chạy fbtoken.py để gia hạn"))
         )
+        if days <= TOKEN_WARN_DAYS:
+            from notify import notify_token_expiring
+
+            notify_token_expiring(days)
     else:
         checks.append(Check(OK, "FB token hạn", "không hết hạn (System User token)"))
 

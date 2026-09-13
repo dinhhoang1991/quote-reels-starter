@@ -10,6 +10,17 @@ from pathlib import Path
 
 from config import load_config, resolve_path
 
+VIDEO_SIZE_RE = re.compile(r"\b(\d{2,5})x(\d{2,5})\b")
+FPS_RE = re.compile(r"([\d.]+)\s+fps")
+SAMPLE_RATE_RE = re.compile(r"(\d{2,6})\s*Hz")
+CHANNELS = {"mono": 1, "stereo": 2, "2.1": 3, "5.1": 6, "7.1": 8}
+S16LE_BYTES_PER_SAMPLE = 2
+# Encoder/filter pipeline bắt buộc phải có; thiếu là render chết giữa chừng.
+REQUIRED_ENCODERS = ("libx264", "aac")
+REQUIRED_FILTERS = ("zoompan", "sidechaincompress", "loudnorm", "gradients", "anoisesrc")
+# Chỉ cần khi bật phụ đề burn-in (libass).
+OPTIONAL_FILTERS = ("subtitles",)
+
 
 def require_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
@@ -49,6 +60,146 @@ def probe_duration(path: Path) -> float:
         raise SystemExit(f"Không đọc được duration của {path}")
     hours, minutes, seconds = int(match.group(1)), int(match.group(2)), float(match.group(3))
     return hours * 3600 + minutes * 60 + seconds
+
+
+def parse_stream_info(blob: str) -> dict:
+    """Bóc thông số stream từ output `ffmpeg -i` (không cần ffprobe).
+
+    @param blob stderr+stdout của ffmpeg
+    @returns {"video": {"width","height","fps"}, "audio": {"sample_rate","channels","layout"},
+              "duration"} — khoá nào không đọc được thì bỏ
+    """
+    info: dict = {}
+    duration = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", blob)
+    if duration:
+        info["duration"] = (
+            int(duration.group(1)) * 3600 + int(duration.group(2)) * 60 + float(duration.group(3))
+        )
+    for line in blob.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("Stream #"):
+            continue
+        if "Video:" in stripped:
+            size = VIDEO_SIZE_RE.search(stripped)
+            fps = FPS_RE.search(stripped)
+            video = {}
+            if size:
+                video["width"], video["height"] = int(size.group(1)), int(size.group(2))
+            if fps:
+                video["fps"] = float(fps.group(1))
+            if video:
+                info["video"] = video
+        elif "Audio:" in stripped:
+            rate = SAMPLE_RATE_RE.search(stripped)
+            audio = {}
+            if rate:
+                audio["sample_rate"] = int(rate.group(1))
+            for layout, channels in CHANNELS.items():
+                if re.search(rf"\b{re.escape(layout)}\b", stripped):
+                    audio["layout"] = layout
+                    audio["channels"] = channels
+                    break
+            if audio:
+                info["audio"] = audio
+    return info
+
+
+def ffmpeg_stream_info(path: Path) -> dict:
+    """Chạy ffmpeg để đọc thông số stream của file.
+
+    @param path file media
+    @returns kết quả của parse_stream_info
+    """
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-i", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    return parse_stream_info(f"{proc.stderr or ''}{proc.stdout or ''}")
+
+
+def audio_stream_seconds(path: Path, sample_rate: int | None = None, channels: int = 2) -> float:
+    """Đo độ dài thật của stream audio bằng cách decode sang PCM và đếm byte.
+
+    Không cần ffprobe, và đo đúng stream audio (container duration là của stream dài nhất).
+
+    @param path file media
+    @param sample_rate sample rate dùng khi decode, mặc định theo config
+    @param channels số kênh dùng khi decode
+    @returns số giây; 0.0 nếu không decode được
+    """
+    cfg = load_config()
+    rate = int(sample_rate or cfg.audio.sample_rate)
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0",
+            "-f", "s16le", "-acodec", "pcm_s16le", "-ar", str(rate), "-ac", str(channels), "-",
+        ],
+        capture_output=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return 0.0
+    samples = len(proc.stdout) / (S16LE_BYTES_PER_SAMPLE * max(channels, 1))
+    return samples / rate
+
+
+def parse_capabilities(blob: str) -> set[str]:
+    """Bóc tên encoder/filter từ output `ffmpeg -encoders` / `-filters`.
+
+    Encoder có cột cờ 6 ký tự (` V....D libx264 ...`), filter có cột cờ 3–4 ký tự
+    (`.SC zoompan`), và phần chú giải cũng có dạng `T.. = Timeline support` nên phải loại.
+
+    @param blob stderr+stdout của ffmpeg
+    @returns tập tên (đã lowercase)
+    """
+    names: set[str] = set()
+    for line in blob.splitlines():
+        if " = " in line:
+            continue
+        match = re.match(r"^\s*[A-Z.]{3,6}\s+([A-Za-z0-9_]+)\s", line)
+        if match:
+            names.add(match.group(1).lower())
+    return names
+
+
+def ffmpeg_capabilities() -> tuple[set[str], set[str]]:
+    """Encoder và filter mà ffmpeg hiện có.
+
+    Không chạy được ffmpeg (thiếu binary, symlink hỏng, không có quyền) thì trả tập rỗng
+    để doctor báo thiếu chứ không crash.
+
+    @returns (encoders, filters)
+    """
+    result: list[set[str]] = []
+    for flag in ("-encoders", "-filters"):
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-hide_banner", flag], capture_output=True, text=True
+            )
+        except OSError:
+            return set(), set()
+        result.append(parse_capabilities(f"{proc.stderr or ''}{proc.stdout or ''}"))
+    return result[0], result[1]
+
+
+def ffmpeg_gaps(cfg=None) -> tuple[list[str], list[str]]:
+    """Encoder/filter còn thiếu so với yêu cầu của pipeline.
+
+    @param cfg config, mặc định đọc config.yaml (bật phụ đề thì `subtitles` thành bắt buộc)
+    @returns (thiếu bắt buộc, thiếu tuỳ chọn)
+    """
+    cfg = cfg or load_config()
+    encoders, filters = ffmpeg_capabilities()
+    required_filters = list(REQUIRED_FILTERS)
+    optional_filters = list(OPTIONAL_FILTERS)
+    if bool((cfg.get("subtitles", {}) or {}).get("enabled", False)):
+        # bật phụ đề thì libass trở thành bắt buộc
+        required_filters += [name for name in optional_filters if name == "subtitles"]
+        optional_filters = [name for name in optional_filters if name != "subtitles"]
+    missing_encoders = [name for name in REQUIRED_ENCODERS if name not in encoders]
+    missing_filters = [name for name in required_filters if name not in filters]
+    optional = [name for name in optional_filters if name not in filters]
+    return missing_encoders + missing_filters, optional
 
 
 def clamp_duration(seconds: float) -> float:

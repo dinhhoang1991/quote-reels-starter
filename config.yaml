@@ -106,6 +106,36 @@ crosspost:
   youtube_privacy: public
   tiktok_privacy: SELF_ONLY
 
+subtitles:
+  # Phụ đề burn-in từ timing từng từ của edge-tts (chỉ có khi để script tự đọc).
+  # Bản đọc ngoài (Vbee/FPT) không có timing nên phụ đề sẽ tự bỏ qua.
+  enabled: true
+  words_per_cue: 3          # số từ mỗi dòng phụ đề
+  max_chars_per_cue: 22      # ngắn hơn để 1 dòng; dài hơn thì libass tự xuống dòng
+  max_gap_ms: 800           # khoảng lặng dài hơn thì cắt dòng
+  hold_ms: 120              # giữ dòng thêm chút sau từ cuối
+  font_size: 64
+  margin_v: 470             # cách đáy — phải cao hơn footer của overlay (1496px)
+  margin_h: 60
+  primary_color: "#FFFFFF"
+  highlight_color: "#FFE566"
+  outline_color: "#000000"
+  outline: 4
+  shadow: 0
+  bold: true
+  uppercase: true
+  # karaoke: true = từ đã đọc được tô highlight dần (kiểu chạy chữ)
+  karaoke: false
+  require_timings: true     # false = vẫn render dù không có timing
+
+notify:
+  # Cảnh báo khi pipeline lỗi. Khai báo kênh trong .env:
+  # TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, hoặc NOTIFY_WEBHOOK_URL.
+  enabled: true
+  min_level: warn        # info | warn | error — mức tối thiểu để gửi
+  on_success: false      # true = gửi cả khi đăng thành công (dễ ồn)
+  on_empty_queue: true   # true = cảnh báo khi --queue không còn clip nào
+
 schedule:
   # Dùng cho `src/scheduler.py` (container/Docker). Giờ UTC; cron của host thì dùng
   # scripts/cron.example. Biến môi trường SCHEDULE_HOUR/MINUTE/COMMAND ghi đè config này.

@@ -15,6 +15,7 @@ from jobqueue import move as queue_move
 from jobqueue import next_pending, queue_lock
 from logutil import log, remaining_quota
 from make_video import build
+from notify import notify_empty_queue, notify_publish_failure, notify_publish_success
 from schema import load_clip
 from upload_facebook import caption_from_json, load_env, upload_reel
 
@@ -68,32 +69,42 @@ def make_clip_cover(video: Path, data: dict) -> Path | None:
 
 
 def crosspost(
-    video: Path, data: dict, targets: list[str], cover: Path | None, caption: str
+    video: Path, data: dict, targets: list[str], cover: Path | None, caption: str, force: bool = False
 ) -> dict[str, dict]:
     """Đăng thêm lên các nền tảng khác; lỗi từng nền tảng chỉ được ghi lại.
+
+    Việc chống trùng và ghi log nằm trong từng uploader (`upload_youtube`/`upload_tiktok`)
+    để chạy CLI trực tiếp cũng được bảo vệ.
 
     @param video file mp4 đã render
     @param data clip đã validate
     @param targets danh sách 'youtube' / 'tiktok'
     @param cover ảnh cover, có thể None
     @param caption caption dùng làm mô tả
+    @param force đăng lại dù đã cross-post trước đó
     @returns {target: kết quả hoặc {"error": ...}}
     """
     cfg = load_config()
     tags = os.getenv("DEFAULT_HASHTAGS", "")
     cover_ms = int(round(float((cfg.get("cover", {}) or {}).get("at_seconds", 0) or 0) * 1000))
+    clip_id = str(data.get("id", ""))
     results: dict[str, dict] = {}
     for target in targets:
         try:
             if target == "youtube":
                 from upload_youtube import upload_clip as upload_youtube
 
-                result = upload_youtube(video, data, caption=caption, tags=tags, cover=cover)
+                result = upload_youtube(
+                    video, data, caption=caption, tags=tags, cover=cover,
+                    clip_id=clip_id, force=force,
+                )
             elif target == "tiktok":
                 from upload_tiktok import upload_clip as upload_tiktok
 
-                result = upload_tiktok(video, caption or str(data.get("title", "")),
-                                       cover_timestamp_ms=cover_ms)
+                result = upload_tiktok(
+                    video, caption or str(data.get("title", "")),
+                    cover_timestamp_ms=cover_ms, clip_id=clip_id, force=force,
+                )
             else:
                 result = {"error": f"nền tảng lạ: {target}"}
         except (SystemExit, Exception) as exc:
@@ -101,19 +112,10 @@ def crosspost(
         results[target] = result
         if result.get("error"):
             log(f"crosspost {target}: LỖI {result['error']}")
+        elif result.get("skipped"):
+            log(f"crosspost {target}: bỏ qua ({result.get('reason', 'đã đăng')})")
         else:
             log(f"crosspost {target}: {result.get('url') or result.get('publish_id') or 'ok'}")
-        if not result.get("error") and data.get("id"):
-            try:
-                from logutil import record_publish
-
-                record_publish(
-                    data["id"], str(result.get("video_id") or result.get("publish_id") or ""),
-                    f"CROSSPOST_{target.upper()}",
-                    str(result.get("url") or ""), {"target": target},
-                )
-            except (SystemExit, Exception) as exc:
-                log(f"cảnh báo: không ghi được log crosspost {target} ({exc})")
     return results
 
 
@@ -177,11 +179,13 @@ def publish_one(
     log(f"reel: {result.get('reel_url')}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
+    notify_publish_success(data["id"], str(result.get("reel_url", "")))
+
     if crosspost_targets and state.upper() == "PUBLISHED":
         cover = make_clip_cover(video, data)
         log(f"5) crosspost: {', '.join(crosspost_targets)}"
             + (f" (cover {cover.name})" if cover else ""))
-        crosspost(video, data, crosspost_targets, cover, caption)
+        crosspost(video, data, crosspost_targets, cover, caption, force=force)
 
 
 def main() -> None:
@@ -212,6 +216,7 @@ def main() -> None:
         if from_queue:
             json_path = next_pending()
             if json_path is None:
+                notify_empty_queue()
                 raise SystemExit(
                     "Hàng chờ trống. python3 src/jobqueue.py add data/samples/clip_001.json"
                 )
@@ -235,6 +240,7 @@ def main() -> None:
             if from_queue:
                 dest = queue_fail(json_path, describe_error(exc))
                 log(f"lỗi, moved to {dest} (chi tiết ở _queue.last_error)")
+            notify_publish_failure(json_path.stem, describe_error(exc))
             raise
         if from_queue:
             dest = queue_move(json_path, "done")

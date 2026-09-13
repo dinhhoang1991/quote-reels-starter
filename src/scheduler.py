@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from config import Cfg, load_config
 from logutil import log
+from notify import notify
 
 DEFAULT_HOUR = 7
 DEFAULT_MINUTE = 0
@@ -96,10 +97,17 @@ def run_daily(
         log(f"lần chạy kế tiếp sau {wait / 3600:.2f}h ({hour:02d}:{minute:02d} UTC)")
         sleep(wait)
         log(f"chạy: {command}")
-        result = run(argv, check=False)
+        try:
+            result = run(argv, check=False)
+        except OSError as exc:
+            log(f"không chạy được lệnh: {exc}")
+            notify(f"Không chạy được lệnh theo lịch: {command} ({exc})", level="error")
+            runs += 1
+            continue
         runs += 1
         if result.returncode != 0:
             log(f"lệnh trả về exit code {result.returncode} (vẫn tiếp tục lịch)")
+            notify(f"Lệnh theo lịch trả về exit code {result.returncode}: {command}", level="error")
     return runs
 
 
