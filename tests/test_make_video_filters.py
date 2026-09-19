@@ -15,6 +15,7 @@ from make_video import (  # noqa: E402
     ken_burns_options,
     ken_burns_plan,
     ken_burns_zoom_at,
+    segmented_background,
 )
 
 
@@ -118,6 +119,59 @@ class KenBurnsTest(unittest.TestCase):
         filt = background_filter(load_config(), 10.0, 30, 1080, 1920, False)
         self.assertNotIn("zoompan", filt)
         self.assertIn("crop=1080:1920", filt)
+
+
+class SegmentedBackgroundTest(unittest.TestCase):
+    """Nhiều nền trong cùng 1 clip: mỗi đoạn Ken Burns riêng rồi concat."""
+
+    def test_concat_du_cac_doan_va_ket_thuc_bang_bg(self):
+        filt, spans = segmented_background(load_config(), 30.0, 30, 1080, 1920, [True, True, True])
+        for index in range(3):
+            self.assertIn(f"[{index}:v]", filt)
+            self.assertIn(f"[s{index}]", filt)
+        self.assertIn("concat=n=3:v=1:a=0[bgc]", filt)
+        self.assertTrue(filt.endswith("[bg];"))
+        self.assertEqual(len(spans), 3)
+
+    def test_tong_do_dai_dung_bang_duration(self):
+        duration = 35.98
+        _, spans = segmented_background(load_config(), duration, 30, 1080, 1920, [True, True, True])
+        self.assertAlmostEqual(sum(spans), duration, places=9)
+        # Đoạn cuối nhận phần lẻ để tổng không hụt
+        self.assertGreaterEqual(spans[-1], spans[0])
+
+    def test_anh_tinh_co_zoompan_con_video_thi_khong(self):
+        filt, _ = segmented_background(load_config(), 20.0, 30, 1080, 1920, [True, False])
+        still_part, video_part = filt.split("[1:v]", 1)
+        self.assertIn("zoompan=", still_part)
+        self.assertNotIn("zoompan", video_part)
+        self.assertIn("fps=30", video_part)
+
+    def test_moi_doan_dung_fps_va_co_khung(self):
+        filt, _ = segmented_background(load_config(), 20.0, 30, 1080, 1920, [True, False])
+        self.assertEqual(filt.count("fps=30"), 2)
+        self.assertIn("s=1080x1920", filt)
+        self.assertIn("crop=1080:1920", filt)
+
+    def test_zoompan_dung_d1_de_anh_giu_dung_so_frame(self):
+        # d=frames cho từng input sẽ nhân số frame lên N lần → video dài hơn audio.
+        filt, _ = segmented_background(load_config(), 20.0, 30, 1080, 1920, [True, True])
+        self.assertEqual(filt.count("d=1:"), 2)
+        self.assertNotIn("d=302", filt)
+
+
+class AudioIndexTest(unittest.TestCase):
+    def test_chi_so_input_doi_theo_so_nen(self):
+        filt = audio_filter(load_config(), 20.0, 19.5, voice_index=3, music_index=4)
+        self.assertIn("[3:a]", filt)
+        self.assertIn("[4:a]", filt)
+        self.assertNotIn("[1:a]", filt)
+        self.assertNotIn("[2:a]", filt)
+
+    def test_mac_dinh_van_la_1_va_2(self):
+        filt = audio_filter(load_config(), 20.0, 19.5)
+        self.assertIn("[1:a]", filt)
+        self.assertIn("[2:a]", filt)
 
 
 if __name__ == "__main__":

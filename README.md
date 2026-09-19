@@ -39,6 +39,27 @@ Muốn footage chuyển động: thả video vào `assets/footage/` rồi chuẩ
 ./scripts/prepare_footage.sh   # ghi ra assets/footage/_normalized/
 ```
 
+### Nền và nhạc — làm sao cho clip nào cũng khác nhau
+
+Thả bao nhiêu ảnh/video vào `assets/footage/` và bao nhiêu bài vào `assets/music/` cũng được
+(ảnh `.jpg/.png/.webp`, video `.mp4/.mov`, nhạc `.mp3/.wav/.m4a`). Pipeline **luân phiên** chứ
+không lấy file đầu nữa, và có thể **đổi nền ngay trong cùng một clip**:
+
+```yaml
+assets:
+  pick: rotate          # first | rotate | random
+  recent: 3             # (random) tránh lặp lại 3 file vừa dùng
+  segment_seconds: 10   # đổi nền sau mỗi 10s; 0 = mỗi clip chỉ 1 nền
+```
+
+- `rotate`: mỗi clip tiến một bước, quay vòng khi hết thư mục; vị trí lưu ở
+  `data/asset_rotation.json` nên cron chạy hôm sau không lặp lại nền/nhạc hôm trước.
+- `segment_seconds: 10` + clip 40s ⇒ 4 nền khác nhau trong 1 video (dùng tối đa số file đang có).
+- Để clip thật sự đa dạng: **≥ 6 ảnh/nền** và **≥ 3 bài nhạc**; `doctor.py` sẽ cảnh báo
+  `độ phong phú footage` / `độ phong phú nhạc` khi còn quá ít, và nhắc khi `pick: first`.
+- Nguồn tải hợp pháp (Pexels, Pixabay, Unsplash, Coverr, YouTube Audio Library…) và lưu ý bản
+  quyền nằm ở [assets/CREDITS.md](assets/CREDITS.md).
+
 `config.yaml` **được đọc thật** — màu, giọng, volume, safe zone, hook 3s, ken burns (zoom/pan).
 
 Kiểm tra môi trường trước khi chạy (xem thêm [doctor](#kiểm-tra-trước-khi-chạy-doctor)):
@@ -352,6 +373,7 @@ diễn tập `--dry-run` → đăng 1 clip → kiểm comment/cover/hạn mức:
 | Phụ đề đè lên item cuối của overlay | Không còn xảy ra: overlay tự chừa dải phụ đề + `subtitles.overlay_gap`. Nếu vẫn chạm, tăng `overlay_gap` hoặc giảm `margin_v`. |
 | `Thiếu subtitles` trong doctor | FFmpeg không có libass; cài bản ffmpeg đầy đủ hoặc đặt `subtitles.enabled: false`. |
 | Video dùng nhạc/nền giả | `assets/music/` hoặc `assets/footage/` trống nên pipeline tự sinh placeholder — `doctor.py` cảnh báo. |
+| Clip nào cũng một nền/một nhạc | Thư mục có ít file, hoặc `assets.pick: first`. Đặt `pick: rotate` và thêm ≥ 6 nền + ≥ 3 nhạc; `segment_seconds > 0` để đổi nền ngay trong clip. |
 | `Clip ... trùng nội dung với bài đã đăng` | Chống trùng đang chặn; sửa nội dung cho khác, hoặc `--force`, hoặc hạ `content.duplicate_similarity`. |
 | Cross-post lỗi nhưng Reel đã lên | Đúng thiết kế: lỗi từng nền tảng chỉ được ghi lại. Xem dòng `crosspost <nền tảng>: LỖI ...` hoặc `doctor.py` để biết thiếu credential nào. |
 | YouTube trả `308` | File quá lớn cho upload 1 request (giới hạn ~64MB) — Shorts thường không gặp. |

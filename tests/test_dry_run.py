@@ -62,6 +62,11 @@ class NoNetwork:
         return False
 
 
+def no_dotenv():
+    """Không nạp `.env` của máy: load_env ghi thẳng vào os.environ nên sẽ rò sang test khác."""
+    return mock.patch.object(publish, "load_env")
+
+
 class FacebookDryRunTest(unittest.TestCase):
     def setUp(self):
         self.cfg = config_with({
@@ -213,6 +218,7 @@ class PublishDryRunTest(unittest.TestCase):
             mock.patch.object(publish, "notify_publish_success"),
             mock.patch.object(publish, "notify_publish_failure"),
             mock.patch.object(publish, "notify"),
+            no_dotenv(),
             NoNetwork(),
             redirect_stdout(buffer),mock.patch.dict("os.environ",
                              {"FB_PAGE_ID": "", "FB_PAGE_ACCESS_TOKEN": ""})
@@ -280,6 +286,7 @@ class PublishDryRunTest(unittest.TestCase):
             mock.patch.object(fb, "remaining_quota", return_value=30),
             mock.patch.object(fb, "assert_can_publish"),
             mock.patch.object(publish, "notify_empty_queue"),
+            no_dotenv(),
             NoNetwork(),
         ):
             code = publish.run_batch(args, [], self.cfg)

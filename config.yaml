@@ -14,6 +14,19 @@ video:
     zoom_end: 1.12
     pan: left_right
 
+assets:
+  # Cách chọn nền/nhạc khi thư mục có nhiều file (`assets/footage`, `assets/music`):
+  #   first  = luôn file đầu theo alphabet (hành vi cũ)
+  #   rotate = lần lượt, mỗi clip tiến thêm một bước → clip nào cũng khác nền/nhạc
+  #   random = ngẫu nhiên, tránh lặp lại `recent` file vừa dùng
+  pick: rotate
+  recent: 3
+  # Đổi nền sau mỗi N giây trong CÙNG một clip (0 = mỗi clip chỉ 1 nền).
+  # Số nền thật = min(số file có, làm tròn lên độ_dài / N). Cần ≥ 2 file mới thấy khác.
+  segment_seconds: 10
+  # Nơi lưu vị trí luân phiên (để lần chạy sau không lặp lại nền/nhạc vừa dùng).
+  state_file: data/asset_rotation.json
+
 safe_zone:
   top: 200
   bottom: 360
