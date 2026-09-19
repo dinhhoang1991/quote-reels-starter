@@ -118,6 +118,46 @@ def _media_files(folder: Path, exts: tuple[str, ...]) -> list[Path]:
     ]
 
 
+def check_asset_variety(cfg: Cfg, footage_count: int, music_count: int) -> list[Check]:
+    """Cảnh báo khi asset quá ít để clip khác nhau (nền/nhạc sẽ lặp lại mãi).
+
+    @param cfg config đang dùng
+    @param footage_count số file footage thật
+    @param music_count số file nhạc thật
+    @returns danh sách Check
+    """
+    import assets
+
+    options = assets.settings(cfg)
+    checks: list[Check] = []
+    if footage_count and footage_count < 3:
+        checks.append(Check(
+            WARN, "độ phong phú footage",
+            f"chỉ {footage_count} file — nên ≥ 6 ảnh để clip nào cũng khác nền",
+        ))
+    if options["segment_seconds"] > 0 and 0 < footage_count < 2:
+        checks.append(Check(
+            WARN, "đổi nền trong clip",
+            f"assets.segment_seconds={options['segment_seconds']:.0f}s cần ≥ 2 file footage",
+        ))
+    if music_count and music_count < 2:
+        checks.append(Check(
+            WARN, "độ phong phú nhạc",
+            f"chỉ {music_count} file — nên ≥ 3 bài để clip nào cũng khác nhạc",
+        ))
+    if options["pick"] == "first" and (footage_count > 1 or music_count > 1):
+        checks.append(Check(
+            WARN, "assets.pick",
+            "đang là 'first' nên luôn dùng file đầu; đổi thành 'rotate' nếu muốn luân phiên",
+        ))
+    if options["pick"] in ("rotate", "random"):
+        checks.append(Check(
+            OK, "assets.pick",
+            f"{options['pick']} — {'đổi nền mỗi ' + format(options['segment_seconds'], '.0f') + 's' if options['segment_seconds'] else 'mỗi clip 1 nền'}",
+        ))
+    return checks
+
+
 def check_assets(cfg: Cfg) -> list[Check]:
     """Font bắt buộc, footage/nhạc thật, thư mục ghi được."""
     checks: list[Check] = []
@@ -136,15 +176,16 @@ def check_assets(cfg: Cfg) -> list[Check]:
                                                                  ".jpg", ".jpeg", ".png", ".webp"))
     checks.append(
         Check(OK if footage else WARN, "footage",
-              f"{len(footage)} file, dùng {footage[0].name}" if footage
+              f"{len(footage)} file" if footage
               else "trống — sẽ tự sinh nền gradient (đừng đăng bản này)")
     )
     music = _media_files(resolve_path(cfg.paths.music_dir), (".mp3", ".wav", ".m4a", ".aac"))
     checks.append(
         Check(OK if music else WARN, "music",
-              f"{len(music)} file, dùng {music[0].name}" if music
+              f"{len(music)} file" if music
               else "trống — sẽ tự sinh brown noise (đừng đăng bản này)")
     )
+    checks += check_asset_variety(cfg, len(footage), len(music))
     for key, name in (("overlay_dir", "assets/overlays"), ("out_dir", "assets/out"),
                       ("voice_dir", "assets/voice")):
         checks.append(_writable_dir(resolve_path(cfg.paths[key]), name))

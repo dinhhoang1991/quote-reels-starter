@@ -10,9 +10,11 @@ Ken Burns (zoom + pan) chạy hết độ dài clip thay vì đứng hình sau v
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 from pathlib import Path
 
+import assets
 from checks import clamp_duration, fonts_ok, probe_duration, require_ffmpeg
 from config import load_config, resolve_path
 from render_overlay import render_pair
@@ -163,21 +165,72 @@ def background_filter(
     )
 
 
-def audio_filter(cfg, duration: float, fade_out_start: float) -> str:
+def segmented_background(
+    cfg, duration: float, fps: int, width: int, height: int, stills: list[bool]
+) -> tuple[str, list[float]]:
+    """Chain nhiều nền rồi `concat` thành `[bg]`; trả (filter, độ dài từng đoạn).
+
+    Mỗi đoạn có Ken Burns riêng (ảnh) hoặc scale/crop/fps (video). Đoạn cuối nhận phần
+    thời gian còn lại để tổng đúng bằng `duration` — lệch một chút là audio/video lệch nhau.
+
+    @param cfg config đang dùng
+    @param duration độ dài clip (giây)
+    @param fps khung hình/giây
+    @param width chiều rộng khung
+    @param height chiều cao khung
+    @param stills cờ ảnh-tĩnh cho từng đoạn, theo thứ tự input
+    @returns (đoạn filter, độ dài từng đoạn)
+    """
+    count = len(stills)
+    base = duration / count
+    spans = [base] * count
+    spans[-1] = duration - base * (count - 1)
+    parts: list[str] = []
+    labels: list[str] = []
+    for index, (is_still, span) in enumerate(zip(stills, spans, strict=True)):
+        label = f"[s{index}]"
+        labels.append(label)
+        if is_still and ken_burns_options(cfg)["enabled"]:
+            plan = ken_burns_plan(cfg, span, fps)
+            scaled_w, scaled_h = width * 12 // 10, height * 12 // 10
+            parts.append(
+                f"[{index}:v]scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
+                f"crop={scaled_w}:{scaled_h},"
+                f"zoompan=z='{plan['z']}':x='{plan['x']}':y='{plan['y']}':"
+                f"d=1:s={width}x{height}:fps={fps},setsar=1{label};"
+            )
+        else:
+            parts.append(
+                f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},fps={fps},setsar=1{label};"
+            )
+    return (
+        "".join(parts)
+        + "".join(labels)
+        + f"concat=n={count}:v=1:a=0[bgc];[bgc]fade=t=in:st=0:d=0.4[bg];",
+        spans,
+    )
+
+
+def audio_filter(cfg, duration: float, fade_out_start: float,
+                 voice_index: int = 1, music_index: int = 2) -> str:
     """Voice + music trộn đúng `duration` giây.
 
     `apad=whole_dur` đắp silence cho voice tới hết clip; nếu thiếu bước này thì
     `amix=duration=first` cắt audio theo voice và fade-out ở cuối không bao giờ chạy.
+
+    @param voice_index chỉ số input của voice (đổi khi clip có nhiều nền)
+    @param music_index chỉ số input của nhạc
     """
     sr = int(cfg.audio.sample_rate)
     vol = float(cfg.audio.music_volume)
     duck = cfg.audio.ducking
     head_ms = int(float(cfg.audio.head_seconds) * 1000)
     return (
-        f"[1:a]aresample={sr},aformat=channel_layouts=stereo,"
+        f"[{voice_index}:a]aresample={sr},aformat=channel_layouts=stereo,"
         f"adelay={head_ms}|{head_ms},apad=whole_dur={duration:.3f}[voice];"
         f"[voice]asplit=2[voice_mix][voice_sc];"
-        f"[2:a]aresample={sr},aformat=channel_layouts=stereo,volume={vol}[m];"
+        f"[{music_index}:a]aresample={sr},aformat=channel_layouts=stereo,volume={vol}[m];"
         f"[m][voice_sc]sidechaincompress=threshold={duck.threshold}:ratio={duck.ratio}:"
         f"attack={duck.attack}:release={duck.release}:makeup=2[ducked];"
         f"[voice_mix][ducked]amix=inputs=2:duration=first:dropout_transition=2,"
@@ -229,23 +282,6 @@ def make_cover(video: Path, data: dict, cfg=None) -> Path:
         ]
     )
     return out
-
-
-def first_file(folder: Path, exts: tuple[str, ...]) -> Path | None:
-    """File media đầu tiên (theo alphabet) trong thư mục, bỏ placeholder.
-
-    @param folder thư mục cần quét
-    @param exts đuôi file chấp nhận
-    @returns đường dẫn hoặc None
-    """
-    if not folder.exists():
-        return None
-    files = [
-        p
-        for p in sorted(folder.iterdir())
-        if p.suffix.lower() in exts and p.is_file() and not p.name.startswith("_placeholder")
-    ]
-    return files[0] if files else None
 
 
 def make_placeholder_footage(path: Path, seconds: float, width: int, height: int, fps: int) -> Path:
@@ -351,26 +387,39 @@ def build(
     duration = clamp_duration(voice_dur + head + tail)
     hook_s = min(float(cfg.hook.seconds), max(duration - 0.4, 0.8))
 
-    still_ext = (".jpg", ".jpeg", ".png", ".webp")
-    video_ext = (".mp4", ".mov", ".mkv", ".webm")
+    asset_options = assets.settings(cfg)
+    seg_seconds = asset_options["segment_seconds"]
+
     if footage is None:
-        footage = first_file(resolve_path(cfg.paths.footage_dir), video_ext + still_ext)
-    if footage is None:
-        footage = make_placeholder_footage(
-            resolve_path(cfg.paths.footage_dir) / "_placeholder.mp4",
-            max(duration, 12),
-            width,
-            height,
-            fps,
-        )
-    is_still = footage.suffix.lower() in still_ext
+        available = assets.list_media(resolve_path(cfg.paths.footage_dir), assets.FOOTAGE_EXT)
+        wanted = 1
+        if available and seg_seconds > 0:
+            wanted = min(len(available), max(1, math.ceil(duration / seg_seconds)))
+        footage_files = assets.pick_for_clip("footage", available, wanted, cfg) if available else []
+        if not footage_files:
+            footage_files = [
+                make_placeholder_footage(
+                    resolve_path(cfg.paths.footage_dir) / "_placeholder.mp4",
+                    max(duration, 12),
+                    width,
+                    height,
+                    fps,
+                )
+            ]
+    else:
+        footage_files = [footage]
+    stills = [path.suffix.lower() in assets.STILL_EXT for path in footage_files]
+    if len(footage_files) > 1:
+        print(f"Nền ({len(footage_files)} đoạn): " + ", ".join(p.name for p in footage_files))
 
     if music is None:
-        music = first_file(resolve_path(cfg.paths.music_dir), (".mp3", ".wav", ".m4a", ".aac"))
-    if music is None:
-        music = make_placeholder_music(
+        music_files = assets.list_media(resolve_path(cfg.paths.music_dir), assets.MUSIC_EXT)
+        picked_music = assets.pick_for_clip("music", music_files, 1, cfg) if music_files else []
+        music = picked_music[0] if picked_music else make_placeholder_music(
             resolve_path(cfg.paths.music_dir) / "_placeholder.m4a", duration
         )
+    if not music.name.startswith("_placeholder"):
+        print(f"Nhạc: {music.name}")
 
     out = resolve_path(cfg.paths.out_dir) / f"{data['id']}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -388,22 +437,38 @@ def build(
 
         subtitle_chain = "," + subtitles_filter(ass_path, fonts_dir)
 
+    background_count = len(footage_files)
+    hook_index = background_count + 2
+    full_index = background_count + 3
+    if background_count == 1:
+        background = background_filter(cfg, duration, fps, width, height, stills[0])
+        spans = [duration]
+    else:
+        background, spans = segmented_background(cfg, duration, fps, width, height, stills)
+
     filter_complex = (
-        background_filter(cfg, duration, fps, width, height, is_still)
-        + f"[bg][3:v]overlay=0:0:enable='lt(t,{hook_s:.2f})':format=auto[v1];"
-        + f"[v1][4:v]overlay=0:0:enable='gte(t,{hook_s:.2f})':format=auto"
+        background
+        + f"[bg][{hook_index}:v]overlay=0:0:enable='lt(t,{hook_s:.2f})':format=auto[v1];"
+        + f"[v1][{full_index}:v]overlay=0:0:enable='gte(t,{hook_s:.2f})':format=auto"
         + subtitle_chain
         + f",fade=t=out:st={fade_out_start:.2f}:d=0.45[v];"
-        + audio_filter(cfg, duration, fade_out_start)
+        + audio_filter(cfg, duration, fade_out_start,
+                       voice_index=background_count, music_index=background_count + 1)
     )
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-stream_loop",
-        "-1",
-        "-i",
-        str(footage),
+    cmd = ["ffmpeg", "-y"]
+    if background_count == 1:
+        # Giữ nguyên đường cũ cho 1 nền (Ken Burns chạy hết clip nhờ zoompan d=frames).
+        cmd += ["-stream_loop", "-1", "-i", str(footage_files[0])]
+    else:
+        for path, is_still, span in zip(footage_files, stills, spans, strict=True):
+            if is_still:
+                # `-framerate` để ảnh sinh đúng fps (mặc định image2 là 25) — lệch là video
+                # ngắn hơn audio và mất tiếng ở cuối.
+                cmd += ["-framerate", str(fps), "-loop", "1", "-t", f"{span:.3f}", "-i", str(path)]
+            else:
+                cmd += ["-stream_loop", "-1", "-t", f"{span:.3f}", "-i", str(path)]
+    cmd += [
         "-i",
         str(voice),
         "-stream_loop",

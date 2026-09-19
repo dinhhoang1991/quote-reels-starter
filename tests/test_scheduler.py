@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scheduler: số giây tới mốc chạy kế tiếp + vòng chạy hằng ngày."""
 
+import os
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -38,6 +39,17 @@ class SecondsUntilTest(unittest.TestCase):
 
 
 class SettingsTest(unittest.TestCase):
+    def setUp(self):
+        # Test khác trong cùng tiến trình có thể đã nạp `.env` (load_env ghi thẳng vào
+        # os.environ) — bỏ hết SCHEDULE_* để test này không phụ thuộc máy đang chạy.
+        patcher = mock.patch.dict(
+            os.environ,
+            {k: v for k, v in os.environ.items() if not k.startswith("SCHEDULE_")},
+            clear=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def cfg(self, **schedule) -> Cfg:
         return Cfg({"schedule": schedule} if schedule else {})
 

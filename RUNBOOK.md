@@ -107,9 +107,11 @@ Nếu bật cảnh báo, thêm `notify.on_success: true` để nhận tin mỗi 
 
 - **Phụ đề** chỉ có khi voice do edge-tts đọc (`subtitles.require_timings: true`); voice ngoài
   (Vbee/FPT qua `--voice`) không có timing nên phụ đề tự bỏ qua.
-- **Nhạc/nền**: `assets/music/` trống thì pipeline tự sinh tiếng ồn placeholder;
-  `assets/footage/` chỉ có 1 ảnh mẫu → mọi clip cùng một nền. Thả file thật vào rồi chạy
-  `./scripts/prepare_footage.sh`.
+- **Nhạc/nền**: `assets/music/` trống thì pipeline tự sinh tiếng ồn placeholder. Nền/nhạc **luân
+  phiên** theo `assets.pick` (mặc định `rotate`) nên thêm càng nhiều file càng đa dạng — nên có
+  ≥ 6 nền (ảnh hoặc video) + ≥ 3 bài nhạc; `assets.segment_seconds > 0` cho đổi nền ngay trong
+  cùng một clip. Video tải về chạy `./scripts/prepare_footage.sh` trước. Nguồn hợp pháp:
+  [assets/CREDITS.md](assets/CREDITS.md).
 - **Xoá `data/published.json`** là mất luôn bộ đếm hạn mức 24h và chống trùng nội dung.
 - **TikTok**: app chưa được duyệt thì mọi bài ở dạng riêng tư, dù `TIKTOK_PRIVACY_LEVEL` đặt gì.
 - **Phụ đề và overlay**: overlay tự chừa dải phụ đề (`subtitles.margin_v` + `font_size` +

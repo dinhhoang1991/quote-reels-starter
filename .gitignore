@@ -18,6 +18,8 @@ assets/music/_placeholder.m4a
 assets/footage/_normalized/
 
 data/published.json
+# Vị trí luân phiên nền/nhạc (máy nào chạy máy đó giữ)
+data/asset_rotation.json
 data/queue/done/*
 !data/queue/done/.gitkeep
 data/queue/failed/*
