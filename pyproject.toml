@@ -12,7 +12,7 @@ license = { text = "MIT" }
 # Giữ khớp với requirements.txt — tests/test_packaging.py kiểm tra hai bên.
 dependencies = [
     "pillow==12.3.0",
-    "edge-tts==7.2.8",
+    "edge-tts==7.3.1",
     "pyyaml==6.0.3",
     "requests==2.34.2",
 ]
